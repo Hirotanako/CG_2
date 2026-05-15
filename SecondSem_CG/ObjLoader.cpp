@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cctype>
+#include <cwctype>
 #include <fstream>
 #include <sstream>
 #include <string>
@@ -67,6 +68,78 @@ static bool ParseFloat2(const std::string& rest, float out[2])
     return !iss.fail();
 }
 
+// Строка map_* в MTL: опции -s u v (тайлинг), -o u v (смещение UV), затем путь к файлу.
+static void ParseMapOptionsAndFilename(std::string rest, std::wstring& outPath, float scale[2], float offset[2])
+{
+    scale[0] = scale[1] = 1.0f;
+    offset[0] = offset[1] = 0.0f;
+    TrimInPlace(rest);
+    std::istringstream iss(rest);
+    std::string tok;
+    std::string pathAccum;
+
+    while (iss >> tok)
+    {
+        if (tok == "-s")
+        {
+            float u = 1.0f, v = 1.0f;
+            if (iss >> u >> v)
+            {
+                scale[0] = u;
+                scale[1] = v;
+            }
+            continue;
+        }
+        if (tok == "-o")
+        {
+            float u = 0.0f, v = 0.0f;
+            if (iss >> u >> v)
+            {
+                offset[0] = u;
+                offset[1] = v;
+            }
+            continue;
+        }
+        if (!tok.empty() && tok.front() == '-')
+        {
+            if (tok == "-bm")
+            {
+                float dummy{};
+                iss >> dummy;
+                continue;
+            }
+            if (tok == "-clamp" || tok == "-blendu" || tok == "-blendv")
+            {
+                std::string opt;
+                iss >> opt;
+                continue;
+            }
+            continue;
+        }
+
+        pathAccum = tok;
+        std::string restLine;
+        std::getline(iss >> std::ws, restLine);
+        if (!restLine.empty())
+            pathAccum += restLine;
+        break;
+    }
+
+    TrimInPlace(pathAccum);
+    outPath = Utf8ToWide(pathAccum);
+    while (!outPath.empty() && iswspace(outPath.front()))
+        outPath.erase(outPath.begin());
+    while (!outPath.empty() && iswspace(outPath.back()))
+        outPath.pop_back();
+    if (!outPath.empty() && outPath.front() == L'"' && outPath.back() == L'"' && outPath.size() >= 2)
+        outPath = outPath.substr(1, outPath.size() - 2);
+    for (wchar_t& ch : outPath)
+    {
+        if (ch == L'/')
+            ch = L'\\';
+    }
+}
+
 struct VKey
 {
     int32_t vi = 0;
@@ -95,6 +168,31 @@ static size_t ResolveIndex(int idx, size_t count)
     return 0;
 }
 
+static bool EqCiAscii(std::string_view a, std::string_view b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (size_t i = 0; i < a.size(); ++i)
+    {
+        const unsigned char ca = static_cast<unsigned char>(a[i]);
+        const unsigned char cb = static_cast<unsigned char>(b[i]);
+        if (std::tolower(ca) != std::tolower(cb))
+            return false;
+    }
+    return true;
+}
+
+static std::string LowerAsciiCopy(std::string s)
+{
+    for (char& c : s)
+    {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u <= 127)
+            c = static_cast<char>(std::tolower(u));
+    }
+    return s;
+}
+
 static bool LoadMtl(const std::filesystem::path& mtlPath, std::vector<Material>& outMaterials, std::wstring& err)
 {
     std::ifstream f(mtlPath);
@@ -116,7 +214,7 @@ static bool LoadMtl(const std::filesystem::path& mtlPath, std::vector<Material>&
         std::string rest = sp == std::string::npos ? std::string{} : line.substr(sp + 1);
         TrimInPlace(rest);
 
-        if (tag == "newmtl")
+        if (EqCiAscii(tag, "newmtl"))
         {
             outMaterials.push_back({});
             cur = &outMaterials.back();
@@ -127,7 +225,7 @@ static bool LoadMtl(const std::filesystem::path& mtlPath, std::vector<Material>&
         if (!cur)
             continue;
 
-        if (tag == "Kd")
+        if (EqCiAscii(tag, "Kd"))
         {
             float c[3]{};
             if (ParseFloat3(rest, c))
@@ -137,17 +235,35 @@ static bool LoadMtl(const std::filesystem::path& mtlPath, std::vector<Material>&
                 cur->Kd[2] = c[2];
             }
         }
-        else if (tag == "map_Kd")
+        else if (EqCiAscii(tag, "Ks"))
         {
-            std::wstring w = Utf8ToWide(rest);
-            if (!w.empty() && w.front() == L'"' && w.back() == L'"' && w.size() >= 2)
-                w = w.substr(1, w.size() - 2);
-            for (wchar_t& ch : w)
+            float c[3]{};
+            if (ParseFloat3(rest, c))
             {
-                if (ch == L'/')
-                    ch = L'\\';
+                cur->Ks[0] = c[0];
+                cur->Ks[1] = c[1];
+                cur->Ks[2] = c[2];
             }
-            cur->diffuseMapRel = std::move(w);
+        }
+        else if (EqCiAscii(tag, "Ns"))
+        {
+            std::istringstream ns(rest);
+            float n = cur->Ns;
+            ns >> n;
+            if (!ns.fail())
+                cur->Ns = (std::max)(n, 1.0f);
+        }
+        else if (EqCiAscii(tag, "map_Kd"))
+        {
+            ParseMapOptionsAndFilename(rest, cur->diffuseMapRel, cur->uvScale, cur->uvOffset);
+        }
+        else if (EqCiAscii(tag, "map_Ks"))
+        {
+            float s[2]{1.0f, 1.0f};
+            float o[2]{0.0f, 0.0f};
+            ParseMapOptionsAndFilename(rest, cur->specularMapRel, s, o);
+            (void)s;
+            (void)o;
         }
     }
     return true;
@@ -218,7 +334,7 @@ bool LoadObj(const std::filesystem::path& objPath, LoadedMesh& out, std::wstring
 
     std::unordered_map<std::string, uint32_t> matByName;
     for (uint32_t i = 0; i < out.materials.size(); ++i)
-        matByName[out.materials[i].name] = i;
+        matByName[LowerAsciiCopy(out.materials[i].name)] = i;
 
     std::vector<XMFLOAT3> positions;
     std::vector<XMFLOAT3> normals;
@@ -317,14 +433,15 @@ bool LoadObj(const std::filesystem::path& objPath, LoadedMesh& out, std::wstring
         {
             float t[2]{};
             if (ParseFloat2(rest, t))
-                uvs.push_back(XMFLOAT2{t[0], t[1]});
+                // OBJ/MTL обычно в пространстве OpenGL (V снизу); для DX11/12 нужен переворот по V.
+                uvs.push_back(XMFLOAT2{t[0], 1.0f - t[1]});
             continue;
         }
         if (tag == "usemtl")
         {
             flushGroup();
             TrimInPlace(rest);
-            auto it = matByName.find(rest);
+            auto it = matByName.find(LowerAsciiCopy(rest));
             curMat = (it != matByName.end()) ? it->second : 0;
             continue;
         }

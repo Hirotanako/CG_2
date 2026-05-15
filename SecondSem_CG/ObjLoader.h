@@ -26,7 +26,12 @@ struct Material
 {
     std::string name;
     std::wstring diffuseMapRel;
+    std::wstring specularMapRel; // map_Ks
     float Kd[3]{1.0f, 1.0f, 1.0f};
+    float Ks[3]{0.15f, 0.15f, 0.15f};
+    float Ns{32.0f};
+    float uvScale[2]{1.0f, 1.0f};  // из map_Kd / map_Ks: -s u v
+    float uvOffset[2]{0.0f, 0.0f}; // -o u v
 };
 
 struct LoadedMesh

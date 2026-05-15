@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -45,15 +46,26 @@ struct alignas(256) FrameCB
 {
     XMFLOAT4X4 World;
     XMFLOAT4X4 ViewProj;
-    float _Pad[32];
+    XMFLOAT4 TimeCamPos;
+    XMFLOAT4 UvAnimAndPad;
+    float _PadRest[24];
 };
 
 static_assert(sizeof(FrameCB) == 256);
 
-struct MatCB
+struct alignas(256) MatCBGPU
 {
     XMFLOAT4 Kd;
+    XMFLOAT2 UvScale;
+    XMFLOAT2 UvOffset;
+    XMFLOAT3 Ks;
+    float Ns;
+    UINT UseUvAnim;
+    UINT HasSpecularTex;
+    float _PadMat[50];
 };
+
+static_assert(sizeof(MatCBGPU) == 256);
 
 HWND g_hwnd = nullptr;
 UINT g_width = kClientW;
@@ -94,8 +106,9 @@ ComPtr<ID3D12Resource> g_meshIB;
 D3D12_VERTEX_BUFFER_VIEW g_meshVbv{};
 D3D12_INDEX_BUFFER_VIEW g_meshIbv{};
 
-std::vector<uint32_t> g_matToSrv;
+std::vector<uint32_t> g_matSrvPairBase;
 std::vector<ComPtr<ID3D12Resource>> g_gpuTextures;
+ComPtr<ID3D12Resource> g_whiteTexture;
 ComPtr<ID3D12Resource> g_matCBUpload;
 UINT8* g_matCBMapped = nullptr;
 UINT g_matCount = 0;
@@ -104,6 +117,7 @@ ComPtr<ID3D12Resource> g_frameCBUpload;
 UINT8* g_frameCBMapped = nullptr;
 
 UINT g_frameIndex = 0;
+float g_appTime = 0.0f;
 
 XMFLOAT3 g_camPos{0.0f, 1.4f, 4.5f};
 float g_camYaw = 0.0f;
@@ -293,7 +307,7 @@ void CreatePipeline()
 {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 1;
+    range.NumDescriptors = 2;
     range.BaseShaderRegister = 0;
     range.RegisterSpace = 0;
     range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -422,12 +436,29 @@ std::filesystem::path FindSponzaObj()
     return {};
 }
 
+static bool MaterialPathSuggestUvAnim(const std::wstring& rel)
+{
+    std::wstring s = rel;
+    for (wchar_t& c : s)
+        c = static_cast<wchar_t>(towlower(static_cast<wint_t>(c)));
+
+    static const wchar_t* keys[] = {
+        L"fabric", L"curtain", L"banner", L"water", L"flag", L"vines", L"leaf", L"drape", nullptr};
+    for (int k = 0; keys[k] != nullptr; ++k)
+    {
+        if (s.find(keys[k]) != std::wstring::npos)
+            return true;
+    }
+    return false;
+}
+
 bool LoadScene()
 {
     g_sceneReady = false;
     g_mesh = {};
-    g_matToSrv.clear();
+    g_matSrvPairBase.clear();
     g_gpuTextures.clear();
+    g_whiteTexture.Reset();
     g_meshVB.Reset();
     g_meshIB.Reset();
     g_matCBUpload.Reset();
@@ -472,70 +503,92 @@ bool LoadScene()
     g_meshIbv.Format = DXGI_FORMAT_R32_UINT;
 
     const std::filesystem::path mtlDir = objPath.parent_path();
-    std::unordered_map<std::wstring, uint32_t> pathToSrv;
-    g_matToSrv.assign(g_mesh.materials.size(), 0);
+    g_matSrvPairBase.assign(g_mesh.materials.size(), 0);
+    std::vector<uint8_t> matHasSpecularTex(g_mesh.materials.size(), 0);
 
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), nullptr));
 
     std::vector<ComPtr<ID3D12Resource>> uploadKeep;
-    uint32_t nextSrv = 0;
+    uint32_t nextSlot = 0;
 
     ComPtr<ID3D12Resource> whiteTex;
     if (!Tex::CreateSolidTexture2D(
-            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSrv, g_srvDescriptorSize, 0xFFFFFFFFu,
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot, g_srvDescriptorSize, 0xFFFFFFFFu,
             whiteTex, uploadKeep))
     {
         MessageBoxW(g_hwnd, L"Не удалось создать текстуру по умолчанию.", L"Текстуры", MB_OK | MB_ICONERROR);
         return false;
     }
+    g_whiteTexture = whiteTex;
     g_gpuTextures.push_back(whiteTex);
-    const uint32_t whiteSrv = nextSrv++;
+    Tex::WriteTexture2DSrv(
+        g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), nextSlot + 1, g_srvDescriptorSize);
+    nextSlot += 2;
+
+    std::unordered_map<std::wstring, ComPtr<ID3D12Resource>> texCache;
+
+    auto bindTextureSlot = [&](UINT slot, const std::filesystem::path& texPath) -> bool {
+        if (!std::filesystem::exists(texPath))
+        {
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
+            return false;
+        }
+        const std::wstring key = texPath.lexically_normal().wstring();
+        const auto cached = texCache.find(key);
+        if (cached != texCache.end())
+        {
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), cached->second.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
+            return true;
+        }
+
+        ComPtr<ID3D12Resource> texRes;
+        std::wstring terr;
+        if (!Tex::CreateTexture2DFromFile(
+                g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize, texPath,
+                texRes, uploadKeep, terr))
+        {
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
+            return false;
+        }
+
+        g_gpuTextures.push_back(texRes);
+        texCache[key] = texRes;
+        return true;
+    };
 
     for (size_t i = 0; i < g_mesh.materials.size(); ++i)
     {
+        if (nextSlot + 2u > kSrvHeapCount)
+        {
+            MessageBoxW(g_hwnd, L"Переполнение кучи SRV.", L"Текстуры", MB_OK | MB_ICONWARNING);
+            break;
+        }
+
+        const uint32_t pairBase = nextSlot;
+        nextSlot += 2;
+        g_matSrvPairBase[i] = pairBase;
+
         const Obj::Material& m = g_mesh.materials[i];
+
         if (m.diffuseMapRel.empty())
-        {
-            g_matToSrv[i] = whiteSrv;
-            continue;
-        }
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase, g_srvDescriptorSize);
+        else
+            bindTextureSlot(pairBase, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.diffuseMapRel));
 
-        const std::filesystem::path texPath = mtlDir / m.diffuseMapRel;
-        if (!std::filesystem::exists(texPath))
-        {
-            g_matToSrv[i] = whiteSrv;
-            continue;
-        }
+        bool specLoaded = false;
+        if (m.specularMapRel.empty())
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase + 1, g_srvDescriptorSize);
+        else
+            specLoaded =
+                bindTextureSlot(pairBase + 1, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.specularMapRel));
 
-        const std::wstring key = texPath.lexically_normal().wstring();
-        const auto found = pathToSrv.find(key);
-        if (found != pathToSrv.end())
-        {
-            g_matToSrv[i] = found->second;
-            continue;
-        }
-
-        if (nextSrv >= kSrvHeapCount)
-        {
-            g_matToSrv[i] = whiteSrv;
-            continue;
-        }
-
-        ComPtr<ID3D12Resource> tex;
-        std::wstring terr;
-        if (!Tex::CreateTexture2DFromFile(
-                g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSrv, g_srvDescriptorSize, texPath, tex,
-                uploadKeep, terr))
-        {
-            g_matToSrv[i] = whiteSrv;
-            continue;
-        }
-
-        g_gpuTextures.push_back(tex);
-        pathToSrv[key] = nextSrv;
-        g_matToSrv[i] = nextSrv;
-        ++nextSrv;
+        matHasSpecularTex[i] = specLoaded ? 1 : 0;
     }
 
     ExecuteCommandList();
@@ -556,25 +609,41 @@ bool LoadScene()
 
     for (UINT i = 0; i < g_matCount; ++i)
     {
-        MatCB* slot = reinterpret_cast<MatCB*>(g_matCBMapped + static_cast<size_t>(i) * kCbAlign);
+        MatCBGPU* slot = reinterpret_cast<MatCBGPU*>(g_matCBMapped + static_cast<size_t>(i) * kCbAlign);
+        std::memset(slot, 0, sizeof(MatCBGPU));
         if (i < g_mesh.materials.size())
         {
-            const float* kd = g_mesh.materials[i].Kd;
-            slot->Kd = XMFLOAT4(kd[0], kd[1], kd[2], 1.0f);
+            const Obj::Material& mm = g_mesh.materials[i];
+            slot->Kd = XMFLOAT4(mm.Kd[0], mm.Kd[1], mm.Kd[2], 1.0f);
+            slot->UvScale = XMFLOAT2(mm.uvScale[0], mm.uvScale[1]);
+            slot->UvOffset = XMFLOAT2(mm.uvOffset[0], mm.uvOffset[1]);
+            slot->Ks = XMFLOAT3(mm.Ks[0], mm.Ks[1], mm.Ks[2]);
+            slot->Ns = mm.Ns;
+            slot->UseUvAnim = MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1u : 0u;
+            slot->HasSpecularTex = matHasSpecularTex[i];
         }
         else
+        {
             slot->Kd = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
+            slot->UvScale = XMFLOAT2(1.0f, 1.0f);
+            slot->UvOffset = XMFLOAT2(0.0f, 0.0f);
+            slot->Ks = XMFLOAT3(0.2f, 0.2f, 0.2f);
+            slot->Ns = 32.0f;
+        }
     }
 
     g_sceneReady = true;
     return true;
 }
 
-void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj)
+void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
 {
     FrameCB data{};
     XMStoreFloat4x4(&data.World, world);
     XMStoreFloat4x4(&data.ViewProj, viewProj);
+    data.TimeCamPos =
+        XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
+    data.UvAnimAndPad = XMFLOAT4(0.035f, 0.022f, 0.0f, 0.0f);
     std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
 }
 
@@ -670,26 +739,26 @@ void DrawScene(const XMMATRIX& viewProj)
     g_cmdList->SetPipelineState(g_pipeline.Get());
 
     const XMMATRIX world = XMMatrixScaling(0.01f, 0.01f, 0.01f);
-    WriteFrameCB(world, viewProj);
+    WriteFrameCB(world, viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
 
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
     g_cmdList->IASetIndexBuffer(&g_meshIbv);
 
-    const D3D12_GPU_DESCRIPTOR_HANDLE srvBase = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
+    const D3D12_GPU_DESCRIPTOR_HANDLE srvHeapStart = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
     for (const Obj::Submesh& sm : g_mesh.submeshes)
     {
-        if (sm.materialIndex >= g_matToSrv.size())
+        if (sm.materialIndex >= g_matSrvPairBase.size())
             continue;
 
-        const UINT srvIndex = g_matToSrv[sm.materialIndex];
         g_cmdList->SetGraphicsRootConstantBufferView(
             1, g_matCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(sm.materialIndex) * kCbAlign);
 
-        D3D12_GPU_DESCRIPTOR_HANDLE srv = srvBase;
-        srv.ptr += static_cast<SIZE_T>(srvIndex) * g_srvDescriptorSize;
-        g_cmdList->SetGraphicsRootDescriptorTable(2, srv);
+        const UINT pairBase = g_matSrvPairBase[sm.materialIndex];
+        D3D12_GPU_DESCRIPTOR_HANDLE table = srvHeapStart;
+        table.ptr += static_cast<SIZE_T>(pairBase) * g_srvDescriptorSize;
+        g_cmdList->SetGraphicsRootDescriptorTable(2, table);
         g_cmdList->DrawIndexedInstanced(sm.indexCount, 1, sm.indexStart, 0, 0);
     }
 }
@@ -706,6 +775,7 @@ void DrawFrame(float dt)
     }
 
     UpdateCamera(dt);
+    g_appTime += dt;
     const XMMATRIX viewProj = CalcViewProj();
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
@@ -879,7 +949,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
     g_hwnd = CreateWindowExW(
-        0, wc.lpszClassName, L"SecondSem CG — Sponza (ПКМ, WASD, Space/Ctrl)", WS_OVERLAPPEDWINDOW,
+        0, wc.lpszClassName, L"SecondSem CG — Sponza: текстуры, MTL, тайлинг, UV-анимация", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, windowRect.right - windowRect.left, windowRect.bottom - windowRect.top,
         nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd)
