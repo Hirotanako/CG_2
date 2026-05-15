@@ -90,7 +90,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -110,7 +110,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -128,7 +128,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,16 +148,19 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ObjLoader.cpp" />
     <ClCompile Include="SecondSem_CG.cpp" />
     <ClCompile Include="TextureUtil.cpp" />
+    <ClCompile Include="GBuffer.cpp" />
+    <ClCompile Include="RenderingSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders.hlsl" />
+    <None Include="Deferred.hlsl" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

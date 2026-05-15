@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include "ObjLoader.h"
+#include "RenderingSystem.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
@@ -40,6 +41,7 @@ constexpr UINT kFrameCount = 2;
 constexpr UINT kClientW = 1280;
 constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
+constexpr UINT kDeferredSrvBase = 400;
 constexpr UINT kCbAlign = 256;
 
 struct alignas(256) FrameCB
@@ -94,7 +96,9 @@ UINT64 g_frameFenceValues[kFrameCount]{};
 bool g_swapSeenPresent[kFrameCount]{};
 
 ComPtr<ID3D12RootSignature> g_rootSignature;
-ComPtr<ID3D12PipelineState> g_pipeline;
+ComPtr<ID3D12PipelineState> g_pipelineGeo;
+
+RenderingSystem g_renderSys;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -149,9 +153,9 @@ std::wstring ExeDirectory()
     return p;
 }
 
-std::wstring ShaderPath()
+std::wstring DeferredShaderPath()
 {
-    return ExeDirectory() + L"Shaders.hlsl";
+    return ExeDirectory() + L"Deferred.hlsl";
 }
 
 void CompileShader(const wchar_t* path, const char* entry, const char* target, ComPtr<ID3DBlob>& out)
@@ -257,6 +261,11 @@ void ResizeSwapChain(UINT w, UINT h)
     g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
     CreateRtv();
     CreateDepth();
+    if (g_srvHeap && g_device)
+    {
+        g_renderSys.Resize(
+            g_device.Get(), w, h, g_srvHeap.Get(), g_srvDescriptorSize);
+    }
 }
 
 ComPtr<ID3D12Resource> CreateUploadBuffer(const void* data, UINT64 size)
@@ -303,7 +312,7 @@ void CreateSrvHeap()
     g_srvDescriptorSize = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
-void CreatePipeline()
+void CreateGeometryPipeline()
 {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -348,10 +357,10 @@ void CreatePipeline()
     ThrowIfFailed(g_device->CreateRootSignature(
         0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&g_rootSignature)));
 
-    const std::wstring sp = ShaderPath();
+    const std::wstring sp = DeferredShaderPath();
     ComPtr<ID3DBlob> vs, ps;
-    CompileShader(sp.c_str(), "VSMain", "vs_5_0", vs);
-    CompileShader(sp.c_str(), "PSMain", "ps_5_0", ps);
+    CompileShader(sp.c_str(), "GeometryVS", "vs_5_0", vs);
+    CompileShader(sp.c_str(), "GeometryPS", "ps_5_0", ps);
 
     const D3D12_INPUT_ELEMENT_DESC layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -363,7 +372,8 @@ void CreatePipeline()
     pso.pRootSignature = g_rootSignature.Get();
     pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
     pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
-    pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    for (UINT rt = 0; rt < 3; ++rt)
+        pso.BlendState.RenderTarget[rt].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
     pso.RasterizerState.DepthClipEnable = TRUE;
@@ -372,12 +382,14 @@ void CreatePipeline()
     pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso.SampleMask = UINT_MAX;
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pso.NumRenderTargets = 1;
+    pso.NumRenderTargets = 3;
     pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pso.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    pso.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     pso.SampleDesc.Count = 1;
     pso.InputLayout = {layout, _countof(layout)};
-    ThrowIfFailed(g_device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&g_pipeline)));
+    ThrowIfFailed(g_device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&g_pipelineGeo)));
 }
 
 std::filesystem::path FindSponzaObj()
@@ -595,7 +607,7 @@ bool LoadScene()
     uploadKeep.clear();
 
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
-    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), g_pipeline.Get()));
+    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), g_pipelineGeo.Get()));
     ThrowIfFailed(g_cmdList->Close());
 
     g_matCount = static_cast<UINT>(g_mesh.materials.size());
@@ -736,9 +748,10 @@ void DrawScene(const XMMATRIX& viewProj)
     ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
     g_cmdList->SetDescriptorHeaps(1, heaps);
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
-    g_cmdList->SetPipelineState(g_pipeline.Get());
+    g_cmdList->SetPipelineState(g_pipelineGeo.Get());
 
-    const XMMATRIX world = XMMatrixScaling(0.01f, 0.01f, 0.01f);
+    const XMMATRIX world =
+        XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
     WriteFrameCB(world, viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
 
@@ -779,22 +792,13 @@ void DrawFrame(float dt)
     const XMMATRIX viewProj = CalcViewProj();
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
-    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipeline.Get()));
+    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipelineGeo.Get()));
 
-    ComPtr<ID3D12Resource> backBuffer = g_renderTargets[g_frameIndex];
-    const D3D12_RESOURCE_STATES rtBefore =
-        g_swapSeenPresent[g_frameIndex] ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COMMON;
-    D3D12_RESOURCE_BARRIER toRt = MakeTransition(backBuffer.Get(), rtBefore, D3D12_RESOURCE_STATE_RENDER_TARGET);
-    g_cmdList->ResourceBarrier(1, &toRt);
+    GBuffer& gb = g_renderSys.GBufferTargets();
+    gb.TransitionToRenderTargets(g_cmdList.Get());
 
-    D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
-    const D3D12_CPU_DESCRIPTOR_HANDLE dsv = g_dsvHeap->GetCPUDescriptorHandleForHeapStart();
-
-    const float clearColor[] = {0.06f, 0.07f, 0.10f, 1.0f};
-    g_cmdList->ClearRenderTargetView(rtv, clearColor, 0, nullptr);
-    g_cmdList->ClearDepthStencilView(dsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
-    g_cmdList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+    const float gbClearRgb[] = {0.06f, 0.07f, 0.10f};
+    gb.ClearAndSetAsRenderTarget(g_cmdList.Get(), gbClearRgb);
 
     D3D12_VIEWPORT viewport{};
     viewport.Width = static_cast<float>(g_width);
@@ -805,6 +809,20 @@ void DrawFrame(float dt)
     g_cmdList->RSSetScissorRects(1, &scissor);
 
     DrawScene(viewProj);
+
+    gb.TransitionToShaderResource(g_cmdList.Get());
+
+    ComPtr<ID3D12Resource> backBuffer = g_renderTargets[g_frameIndex];
+    const D3D12_RESOURCE_STATES rtBefore =
+        g_swapSeenPresent[g_frameIndex] ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COMMON;
+    D3D12_RESOURCE_BARRIER toRt = MakeTransition(backBuffer.Get(), rtBefore, D3D12_RESOURCE_STATE_RENDER_TARGET);
+    g_cmdList->ResourceBarrier(1, &toRt);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
+
+    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
+    g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -894,7 +912,15 @@ void InitD3D(HWND hwnd)
 
     CreateFrameCB();
     CreateSrvHeap();
-    CreatePipeline();
+    CreateGeometryPipeline();
+    g_renderSys.Init(
+        g_device.Get(),
+        g_width,
+        g_height,
+        g_srvHeap.Get(),
+        kDeferredSrvBase,
+        g_srvDescriptorSize,
+        DeferredShaderPath().c_str());
     LoadScene();
 }
 
