@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="Win32" />
+  </Configurations>
+  <Project Path="SecondSem_CG/SecondSem_CG.vcxproj" Id="8e6683ba-40c2-4df6-81d8-344b1cca09ab" />
+</Solution>
