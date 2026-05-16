@@ -125,7 +125,7 @@ float4 LightingPS(FsOut pin) : SV_Target0
     float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
     float3 P = GPos.Sample(GSamp, pin.uv).xyz;
 
-    float3 color = alb * 0.055f;
+    float3 color = alb * 0.035f;
 
     if (dot(N, N) < 1e-6f)
         return float4(color, 1.f);

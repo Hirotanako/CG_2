@@ -99,47 +99,17 @@ static ComPtr<ID3D12Resource> CreateUploadCb(ID3D12Device* device, UINT64 size)
 void RenderingSystem::WriteDefaultLights()
 {
     LightingCBGPU cb{};
-    cb.lightCount = 7;
-
-    XMVECTOR sund = XMVector3Normalize(XMVectorSet(0.35f, 0.82f, 0.45f, 0.f));
-    cb.lights[0].type = LIGHT_DIR;
-    XMStoreFloat4(&cb.lights[0].direction_cosOuter, sund);
-    cb.lights[0].direction_cosOuter.w = 0.f;
-    cb.lights[0].color_intensity = XMFLOAT4(1.f, 0.98f, 0.92f, 0.55f);
+    cb.lightCount = 3;
 
     cb.lights[1].type = LIGHT_POINT;
-    cb.lights[1].position_range = XMFLOAT4(-5.f, 2.8f, 0.f, 14.f);
-    cb.lights[1].color_intensity = XMFLOAT4(1.f, 0.55f, 0.35f, 4.f);
+    cb.lights[1].position_range = XMFLOAT4(0.f, 4.5f, 2.f, 22.f);
+    cb.lights[1].color_intensity = XMFLOAT4(0.12f, 1.f, 0.22f, 5.5f);
 
-    cb.lights[2].type = LIGHT_POINT;
-    cb.lights[2].position_range = XMFLOAT4(6.f, 3.f, -4.f, 16.f);
-    cb.lights[2].color_intensity = XMFLOAT4(0.45f, 0.65f, 1.f, 3.5f);
-
-    cb.lights[3].type = LIGHT_POINT;
-    cb.lights[3].position_range = XMFLOAT4(0.f, 1.2f, 8.f, 11.f);
-    cb.lights[3].color_intensity = XMFLOAT4(0.85f, 1.f, 0.75f, 2.8f);
-
-    XMVECTOR spotAxis = XMVector3Normalize(XMVectorSet(0.15f, -1.f, 0.05f, 0.f));
-    cb.lights[4].type = LIGHT_SPOT;
-    cb.lights[4].position_range = XMFLOAT4(-2.f, 6.f, 2.f, 22.f);
-    XMStoreFloat4(&cb.lights[4].direction_cosOuter, spotAxis);
-    cb.lights[4].direction_cosOuter.w = cosf(XM_PI / 9.f);
-    cb.lights[4].spotCosInner = cosf(XM_PI / 14.f);
-    cb.lights[4].color_intensity = XMFLOAT4(1.f, 1.f, 1.f, 5.f);
-
-    XMVECTOR spot2 = XMVector3Normalize(XMVectorSet(-0.4f, -0.85f, 0.2f, 0.f));
-    cb.lights[5].type = LIGHT_SPOT;
-    cb.lights[5].position_range = XMFLOAT4(8.f, 5.f, -6.f, 18.f);
-    XMStoreFloat4(&cb.lights[5].direction_cosOuter, spot2);
-    cb.lights[5].direction_cosOuter.w = cosf(XM_PI / 8.f);
-    cb.lights[5].spotCosInner = cosf(XM_PI / 11.f);
-    cb.lights[5].color_intensity = XMFLOAT4(0.75f, 0.55f, 1.f, 4.f);
-
-    XMVECTOR moon = XMVector3Normalize(XMVectorSet(-0.2f, -0.75f, 0.55f, 0.f));
-    cb.lights[6].type = LIGHT_DIR;
-    XMStoreFloat4(&cb.lights[6].direction_cosOuter, moon);
-    cb.lights[6].direction_cosOuter.w = 0.f;
-    cb.lights[6].color_intensity = XMFLOAT4(0.35f, 0.42f, 0.75f, 0.22f);
+    XMVECTOR sunDir = XMVector3Normalize(XMVectorSet(0.35f, 0.82f, 0.45f, 0.f));
+    cb.lights[2].type = LIGHT_DIR;
+    XMStoreFloat4(&cb.lights[2].direction_cosOuter, sunDir);
+    cb.lights[2].direction_cosOuter.w = 0.f;
+    cb.lights[2].color_intensity = XMFLOAT4(0.35f, 0.55f, 1.f, 0.38f);
 
     std::memcpy(m_lightingCBMapped, &cb, sizeof(cb));
 }
@@ -251,13 +221,31 @@ void RenderingSystem::Resize(
         device, shaderVisibleSrvHeap, m_gbufferSrvBase, srvDescriptorIncrement);
 }
 
-void RenderingSystem::UploadFrameConstants(const XMFLOAT3& cameraPos, UINT screenW, UINT screenH)
+void RenderingSystem::UploadFrameConstants(
+    const XMFLOAT3& cameraPos,
+    const XMFLOAT3& cameraForward,
+    UINT screenW,
+    UINT screenH)
 {
     auto* cb = reinterpret_cast<LightingCBGPU*>(m_lightingCBMapped);
     cb->cameraPos_pad = XMFLOAT4(cameraPos.x, cameraPos.y, cameraPos.z, 0.f);
     const float iw = screenW > 0 ? 1.f / static_cast<float>(screenW) : 1.f;
     const float ih = screenH > 0 ? 1.f / static_cast<float>(screenH) : 1.f;
     cb->invScreen_pad = XMFLOAT4(iw, ih, 0.f, 0.f);
+
+    cb->lightCount = 3;
+
+    const XMVECTOR axis = XMVector3Normalize(XMLoadFloat3(&cameraForward));
+    const XMVECTOR eye = XMLoadFloat3(&cameraPos);
+
+    LightGpu& spot = cb->lights[0];
+    spot.type = LIGHT_SPOT;
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(&spot.position_range), eye);
+    spot.position_range.w = 45.f;
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(&spot.direction_cosOuter), axis);
+    spot.direction_cosOuter.w = cosf(XM_PI / 7.f);
+    spot.spotCosInner = cosf(XM_PI / 10.f);
+    spot.color_intensity = XMFLOAT4(1.f, 0.97f, 0.9f, 5.5f);
 }
 
 void RenderingSystem::DrawLightingPass(

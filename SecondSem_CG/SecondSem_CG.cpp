@@ -659,11 +659,16 @@ void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec
     std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
 }
 
+XMVECTOR CameraForwardVector()
+{
+    return XMVector3Normalize(XMVectorSet(
+        sinf(g_camYaw) * cosf(g_camPitch), sinf(g_camPitch), cosf(g_camYaw) * cosf(g_camPitch), 0.0f));
+}
+
 XMMATRIX CalcViewProj()
 {
     const XMVECTOR eye = XMLoadFloat3(&g_camPos);
-    const XMVECTOR dir = XMVector3Normalize(XMVectorSet(
-        sinf(g_camYaw) * cosf(g_camPitch), sinf(g_camPitch), cosf(g_camYaw) * cosf(g_camPitch), 0.0f));
+    const XMVECTOR dir = CameraForwardVector();
     const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
     const XMMATRIX view = XMMatrixLookToLH(eye, dir, up);
     const float aspect = static_cast<float>(g_width) / static_cast<float>((std::max)(1u, g_height));
@@ -725,8 +730,7 @@ void UpdateCamera(float dt)
     if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
         moveY -= 1.0f;
 
-    const XMVECTOR forward = XMVector3Normalize(XMVectorSet(
-        sinf(g_camYaw) * cosf(g_camPitch), sinf(g_camPitch), cosf(g_camYaw) * cosf(g_camPitch), 0.0f));
+    const XMVECTOR forward = CameraForwardVector();
     const XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
     const XMVECTOR right = XMVector3Normalize(XMVector3Cross(worldUp, forward));
     XMVECTOR delta =
@@ -821,7 +825,9 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
+    XMFLOAT3 camForward{};
+    XMStoreFloat3(&camForward, CameraForwardVector());
+    g_renderSys.UploadFrameConstants(g_camPos, camForward, g_width, g_height);
     g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
