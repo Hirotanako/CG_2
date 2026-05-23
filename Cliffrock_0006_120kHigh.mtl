@@ -1,0 +1,16 @@
+# Blender MTL File: '100_ScriptSetup_v037.blend'
+# Material Count: 1
+
+newmtl CliffRock_0006_120kHigh_Material
+Ns 0.000000
+Ka 1.000000 1.000000 1.000000
+Kd 1.000000 1.000000 1.000000
+Ks 0.500000 0.500000 0.500000
+Ke 0.000000 0.000000 0.000000
+Ni 1.450000
+d 1.000000
+illum 2
+map_Bump  -bm 1.000000 CliffRock_0006_120kHigh\\CliffRock_0006_120kHigh_4k_Normal.jpg
+map_Kd CliffRock_0006_120kHigh\\CliffRock_0006_120kHigh_4K_Albedo.jpg
+map_Ns CliffRock_0006_120kHigh\\CliffRock_0006_120kHigh_4k_Roughness.jpg
+refl CliffRock_0006_120kHigh\\CliffRock_0006_120kHigh_4p_Metalness.jpg

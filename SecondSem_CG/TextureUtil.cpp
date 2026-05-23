@@ -143,7 +143,12 @@ static std::wstring InnerPathUnderTexturesFolder(const std::wstring& mapRel)
             c = L'\\';
     }
 
-    static const std::wstring prefixes[] = {L"textures\\", L".\\textures\\"};
+    static const std::wstring prefixes[] = {
+        L"textures_\\",
+        L".\\textures_\\",
+        L"textures\\",
+        L".\\textures\\",
+    };
     for (const auto& pref : prefixes)
     {
         if (CiStartsWith(s, pref))
@@ -452,6 +457,34 @@ static bool DecodeImageFileToRgba32(
 
 } // namespace
 
+static std::wstring ToLowerW(std::wstring s)
+{
+    for (wchar_t& c : s)
+        c = static_cast<wchar_t>(towlower(static_cast<wint_t>(c)));
+    return s;
+}
+
+static bool FindFileStemCi(const std::filesystem::path& dir, const std::wstring& stem, std::filesystem::path& out)
+{
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(dir, ec))
+        return false;
+
+    const std::wstring want = ToLowerW(stem);
+    for (const fs::directory_entry& ent : fs::directory_iterator(dir, ec))
+    {
+        if (ec || !ent.is_regular_file(ec))
+            continue;
+        if (ToLowerW(ent.path().stem().wstring()) == want)
+        {
+            out = ent.path();
+            return true;
+        }
+    }
+    return false;
+}
+
 std::filesystem::path ResolveTexturePathInTexturesFolder(
     const std::filesystem::path& mtlDir,
     const std::wstring& mapRelFromMtl)
@@ -467,13 +500,23 @@ std::filesystem::path ResolveTexturePathInTexturesFolder(
     const std::wstring stemInner = inner.stem().wstring();
     const std::wstring stemFname = fname.stem().wstring();
 
-    const fs::path texRoots[] = {
-        mtlDir / L"textures",
-        mtlDir / L"Textures",
+    std::vector<fs::path> texRoots;
+    texRoots.reserve(6);
+    auto addRoot = [&](const fs::path& p) {
+        if (p.empty())
+            return;
+        const fs::path n = p.lexically_normal();
+        if (std::find(texRoots.begin(), texRoots.end(), n) == texRoots.end())
+            texRoots.push_back(n);
     };
+    addRoot(mtlDir / L"textures_");
+    addRoot(mtlDir / L"textures");
+    addRoot(mtlDir / L"Textures");
+    addRoot(mtlDir.parent_path() / L"textures_");
+    addRoot(mtlDir.parent_path() / L"textures");
 
     std::vector<fs::path> relAttempts;
-    relAttempts.reserve(8);
+    relAttempts.reserve(24);
 
     auto pushAttempt = [&](const fs::path& rel) {
         if (rel.empty())
@@ -484,13 +527,20 @@ std::filesystem::path ResolveTexturePathInTexturesFolder(
         relAttempts.push_back(norm);
     };
 
-    // 1) путь как в MTL (относительно textures/)
+    auto pushStemExts = [&](const std::wstring& stem) {
+        if (stem.empty())
+            return;
+        static const wchar_t* exts[] = {L".jpeg", L".jpg", L".png", L".tga", L".JPEG", L".JPG"};
+        for (const wchar_t* ext : exts)
+            pushAttempt(fs::path(stem + ext));
+    };
+
     pushAttempt(inner);
-    // 2) та же подпапка, имя как stem + .tga (MTL мог указать .jpg/png)
-    pushAttempt(inner.parent_path() / (stemInner + L".tga"));
-    // 3) только stem.tga в корне textures/
-    pushAttempt(fs::path(stemInner + L".tga"));
+    pushStemExts(stemInner);
     pushAttempt(fname);
+    pushStemExts(stemFname);
+    pushAttempt(inner.parent_path() / (stemInner + L".tga"));
+    pushAttempt(fs::path(stemInner + L".tga"));
     pushAttempt(fname.parent_path() / (stemFname + L".tga"));
     pushAttempt(fs::path(stemFname + L".tga"));
 
@@ -503,9 +553,15 @@ std::filesystem::path ResolveTexturePathInTexturesFolder(
             if (!cand.empty() && fs::exists(cand, ec))
                 return cand;
         }
+
+        fs::path found;
+        if (FindFileStemCi(root, stemInner, found))
+            return found;
+        if (FindFileStemCi(root, stemFname, found))
+            return found;
     }
 
-    return (texRoots[0] / inner.parent_path() / (stemInner + L".tga")).lexically_normal();
+    return {};
 }
 
 void WriteTexture2DSrv(

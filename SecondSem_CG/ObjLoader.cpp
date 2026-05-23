@@ -265,6 +265,24 @@ static bool LoadMtl(const std::filesystem::path& mtlPath, std::vector<Material>&
             (void)s;
             (void)o;
         }
+        else if (EqCiAscii(tag, "map_Bump") || EqCiAscii(tag, "map_Kn"))
+        {
+            float s[2]{1.0f, 1.0f};
+            float o[2]{0.0f, 0.0f};
+            ParseMapOptionsAndFilename(rest, cur->normalMapRel, s, o);
+        }
+        else if (EqCiAscii(tag, "map_Disp") || EqCiAscii(tag, "map_disp"))
+        {
+            float s[2]{1.0f, 1.0f};
+            float o[2]{0.0f, 0.0f};
+            ParseMapOptionsAndFilename(rest, cur->displacementMapRel, s, o);
+        }
+        else if (EqCiAscii(tag, "map_Ns"))
+        {
+            float s[2]{1.0f, 1.0f};
+            float o[2]{0.0f, 0.0f};
+            ParseMapOptionsAndFilename(rest, cur->roughnessMapRel, s, o);
+        }
     }
     return true;
 }
@@ -494,7 +512,101 @@ bool LoadObj(const std::filesystem::path& objPath, LoadedMesh& out, std::wstring
         out.materials.back().name = "default";
     }
 
+    if (!out.vertices.empty() && !out.indices.empty())
+        ComputeMeshTangents(out);
+
     return !out.vertices.empty() && !out.indices.empty();
+}
+
+void ComputeMeshTangents(LoadedMesh& mesh)
+{
+    if (mesh.vertices.empty() || mesh.indices.size() < 3)
+        return;
+
+    std::vector<XMFLOAT3> tanAcc(mesh.vertices.size(), XMFLOAT3(0, 0, 0));
+    std::vector<XMFLOAT3> bitAcc(mesh.vertices.size(), XMFLOAT3(0, 0, 0));
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+    {
+        const uint32_t i0 = mesh.indices[i];
+        const uint32_t i1 = mesh.indices[i + 1];
+        const uint32_t i2 = mesh.indices[i + 2];
+        if (i0 >= mesh.vertices.size() || i1 >= mesh.vertices.size() || i2 >= mesh.vertices.size())
+            continue;
+
+        const MeshVertex& v0 = mesh.vertices[i0];
+        const MeshVertex& v1 = mesh.vertices[i1];
+        const MeshVertex& v2 = mesh.vertices[i2];
+
+        const XMVECTOR p0 = XMVectorSet(v0.px, v0.py, v0.pz, 0);
+        const XMVECTOR p1 = XMVectorSet(v1.px, v1.py, v1.pz, 0);
+        const XMVECTOR p2 = XMVectorSet(v2.px, v2.py, v2.pz, 0);
+
+        const XMVECTOR e1 = XMVectorSubtract(p1, p0);
+        const XMVECTOR e2 = XMVectorSubtract(p2, p0);
+
+        const float du1 = v1.u - v0.u;
+        const float dv1 = v1.v - v0.v;
+        const float du2 = v2.u - v0.u;
+        const float dv2 = v2.v - v0.v;
+        const float det = du1 * dv2 - du2 * dv1;
+        if (fabsf(det) < 1e-8f)
+            continue;
+
+        const float r = 1.0f / det;
+        const XMVECTOR t = XMVectorScale(
+            XMVectorSubtract(
+                XMVectorScale(e1, dv2),
+                XMVectorScale(e2, dv1)),
+            r);
+        const XMVECTOR b = XMVectorScale(
+            XMVectorSubtract(
+                XMVectorScale(e2, du1),
+                XMVectorScale(e1, du2)),
+            r);
+
+        XMFLOAT3 tf{}, bf{};
+        XMStoreFloat3(&tf, t);
+        XMStoreFloat3(&bf, b);
+
+        tanAcc[i0].x += tf.x;
+        tanAcc[i0].y += tf.y;
+        tanAcc[i0].z += tf.z;
+        tanAcc[i1].x += tf.x;
+        tanAcc[i1].y += tf.y;
+        tanAcc[i1].z += tf.z;
+        tanAcc[i2].x += tf.x;
+        tanAcc[i2].y += tf.y;
+        tanAcc[i2].z += tf.z;
+
+        bitAcc[i0].x += bf.x;
+        bitAcc[i0].y += bf.y;
+        bitAcc[i0].z += bf.z;
+        bitAcc[i1].x += bf.x;
+        bitAcc[i1].y += bf.y;
+        bitAcc[i1].z += bf.z;
+        bitAcc[i2].x += bf.x;
+        bitAcc[i2].y += bf.y;
+        bitAcc[i2].z += bf.z;
+    }
+
+    for (size_t vi = 0; vi < mesh.vertices.size(); ++vi)
+    {
+        const XMVECTOR n = XMVector3Normalize(
+            XMVectorSet(mesh.vertices[vi].nx, mesh.vertices[vi].ny, mesh.vertices[vi].nz, 0));
+        XMVECTOR t = XMLoadFloat3(&tanAcc[vi]);
+        if (XMVector3Equal(t, XMVectorZero()))
+            t = XMVectorSet(1, 0, 0, 0);
+        t = XMVector3Normalize(XMVectorSubtract(t, XMVectorScale(n, XMVectorGetX(XMVector3Dot(n, t)))));
+        const XMVECTOR b = XMLoadFloat3(&bitAcc[vi]);
+        const float handedness = (XMVectorGetX(XMVector3Dot(XMVector3Cross(n, t), b)) < 0.0f) ? -1.0f : 1.0f;
+        XMFLOAT3 tf{};
+        XMStoreFloat3(&tf, t);
+        mesh.vertices[vi].tx = tf.x;
+        mesh.vertices[vi].ty = tf.y;
+        mesh.vertices[vi].tz = tf.z;
+        mesh.vertices[vi].tw = handedness;
+    }
 }
 
 } // namespace Obj

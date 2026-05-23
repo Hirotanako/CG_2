@@ -99,7 +99,7 @@ static ComPtr<ID3D12Resource> CreateUploadCb(ID3D12Device* device, UINT64 size)
 void RenderingSystem::WriteDefaultLights()
 {
     LightingCBGPU cb{};
-    cb.lightCount = 3;
+    cb.lightCount = 0;
 
     cb.lights[1].type = LIGHT_POINT;
     cb.lights[1].position_range = XMFLOAT4(0.f, 4.5f, 2.f, 22.f);
@@ -233,19 +233,9 @@ void RenderingSystem::UploadFrameConstants(
     const float ih = screenH > 0 ? 1.f / static_cast<float>(screenH) : 1.f;
     cb->invScreen_pad = XMFLOAT4(iw, ih, 0.f, 0.f);
 
-    cb->lightCount = 3;
-
-    const XMVECTOR axis = XMVector3Normalize(XMLoadFloat3(&cameraForward));
-    const XMVECTOR eye = XMLoadFloat3(&cameraPos);
-
-    LightGpu& spot = cb->lights[0];
-    spot.type = LIGHT_SPOT;
-    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(&spot.position_range), eye);
-    spot.position_range.w = 45.f;
-    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(&spot.direction_cosOuter), axis);
-    spot.direction_cosOuter.w = cosf(XM_PI / 7.f);
-    spot.spotCosInner = cosf(XM_PI / 10.f);
-    spot.color_intensity = XMFLOAT4(1.f, 0.97f, 0.9f, 5.5f);
+    cb->lightCount = 0;
+    (void)cameraPos;
+    (void)cameraForward;
 }
 
 void RenderingSystem::DrawLightingPass(

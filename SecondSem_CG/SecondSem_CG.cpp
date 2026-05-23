@@ -50,7 +50,9 @@ struct alignas(256) FrameCB
     XMFLOAT4X4 ViewProj;
     XMFLOAT4 TimeCamPos;
     XMFLOAT4 UvAnimAndPad;
-    float _PadRest[24];
+    XMFLOAT4 TessParams;
+    XMFLOAT4 DebugView;
+    float _PadRest[16];
 };
 
 static_assert(sizeof(FrameCB) == 256);
@@ -60,11 +62,9 @@ struct alignas(256) MatCBGPU
     XMFLOAT4 Kd;
     XMFLOAT2 UvScale;
     XMFLOAT2 UvOffset;
-    XMFLOAT3 Ks;
-    float Ns;
-    UINT UseUvAnim;
-    UINT HasSpecularTex;
-    float _PadMat[50];
+    XMFLOAT4 MatFlags;
+    XMFLOAT4 MatFlags2;
+    float _PadMat[48];
 };
 
 static_assert(sizeof(MatCBGPU) == 256);
@@ -97,6 +97,8 @@ bool g_swapSeenPresent[kFrameCount]{};
 
 ComPtr<ID3D12RootSignature> g_rootSignature;
 ComPtr<ID3D12PipelineState> g_pipelineGeo;
+ComPtr<ID3D12PipelineState> g_pipelineGeoWire;
+bool g_debugFrameView = false;
 
 RenderingSystem g_renderSys;
 
@@ -113,6 +115,9 @@ D3D12_INDEX_BUFFER_VIEW g_meshIbv{};
 std::vector<uint32_t> g_matSrvPairBase;
 std::vector<ComPtr<ID3D12Resource>> g_gpuTextures;
 ComPtr<ID3D12Resource> g_whiteTexture;
+ComPtr<ID3D12Resource> g_grayDispTexture;
+float g_tessFarDist = 12.0f;
+bool g_sceneIsCliffRock = false;
 ComPtr<ID3D12Resource> g_matCBUpload;
 UINT8* g_matCBMapped = nullptr;
 UINT g_matCount = 0;
@@ -316,7 +321,7 @@ void CreateGeometryPipeline()
 {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 2;
+    range.NumDescriptors = 3;
     range.BaseShaderRegister = 0;
     range.RegisterSpace = 0;
     range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -333,7 +338,7 @@ void CreateGeometryPipeline()
     params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[2].DescriptorTable.NumDescriptorRanges = 1;
     params[2].DescriptorTable.pDescriptorRanges = &range;
-    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_STATIC_SAMPLER_DESC samp{};
     samp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -343,7 +348,7 @@ void CreateGeometryPipeline()
     samp.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
     samp.MaxLOD = D3D12_FLOAT32_MAX;
     samp.ShaderRegister = 0;
-    samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC rs{};
     rs.NumParameters = 3;
@@ -358,19 +363,24 @@ void CreateGeometryPipeline()
         0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&g_rootSignature)));
 
     const std::wstring sp = DeferredShaderPath();
-    ComPtr<ID3DBlob> vs, ps;
+    ComPtr<ID3DBlob> vs, hs, ds, ps;
     CompileShader(sp.c_str(), "GeometryVS", "vs_5_0", vs);
+    CompileShader(sp.c_str(), "HSMain", "hs_5_0", hs);
+    CompileShader(sp.c_str(), "DSMain", "ds_5_0", ds);
     CompileShader(sp.c_str(), "GeometryPS", "ps_5_0", ps);
 
     const D3D12_INPUT_ELEMENT_DESC layout[] = {
         {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        {"TANGENT", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
     };
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
     pso.pRootSignature = g_rootSignature.Get();
     pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
+    pso.HS = {hs->GetBufferPointer(), hs->GetBufferSize()};
+    pso.DS = {ds->GetBufferPointer(), ds->GetBufferSize()};
     pso.PS = {ps->GetBufferPointer(), ps->GetBufferSize()};
     for (UINT rt = 0; rt < 3; ++rt)
         pso.BlendState.RenderTarget[rt].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -381,7 +391,7 @@ void CreateGeometryPipeline()
     pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso.SampleMask = UINT_MAX;
-    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
     pso.NumRenderTargets = 3;
     pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     pso.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -389,18 +399,17 @@ void CreateGeometryPipeline()
     pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     pso.SampleDesc.Count = 1;
     pso.InputLayout = {layout, _countof(layout)};
-    ThrowIfFailed(g_device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&g_pipelineGeo)));
+
+    auto createGeoPso = [&](D3D12_FILL_MODE fill, ComPtr<ID3D12PipelineState>& out) {
+        pso.RasterizerState.FillMode = fill;
+        ThrowIfFailed(g_device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&out)));
+    };
+    createGeoPso(D3D12_FILL_MODE_SOLID, g_pipelineGeo);
+    createGeoPso(D3D12_FILL_MODE_WIREFRAME, g_pipelineGeoWire);
 }
 
-std::filesystem::path FindSponzaObj()
+static void CollectSearchRoots(std::vector<std::filesystem::path>& roots)
 {
-    const std::wstring rels[] = {
-        L"Sponza\\sponza.obj",
-        L"Sponza/sponza.obj",
-        L"sponza.obj",
-    };
-
-    std::vector<std::filesystem::path> roots;
     auto tryAdd = [&roots](std::filesystem::path p) {
         if (p.empty())
             return;
@@ -434,18 +443,125 @@ std::filesystem::path FindSponzaObj()
         }
     }
 
-    for (const auto& root : roots)
-    {
-        if (root.empty())
-            continue;
-        for (const auto& rel : rels)
+}
+
+static bool PathLooksLikeCliffRock(const std::filesystem::path& objPath)
+{
+    std::wstring s = objPath.filename().wstring();
+    for (wchar_t& c : s)
+        c = static_cast<wchar_t>(towlower(static_cast<wint_t>(c)));
+    return s.find(L"cliff") != std::wstring::npos;
+}
+
+static std::filesystem::path FindSceneObj()
+{
+    const std::wstring cliffRels[] = {
+        L"Cliffrock_0006_120kHigh.obj",
+        L"cliffrock/Cliffrock_0006_120kHigh.obj",
+    };
+    const std::wstring sponzaRels[] = {
+        L"Sponza\\sponza.obj",
+        L"Sponza/sponza.obj",
+        L"sponza.obj",
+    };
+
+    std::vector<std::filesystem::path> roots;
+    CollectSearchRoots(roots);
+
+    auto tryRels = [&](const std::wstring* rels, size_t count) -> std::filesystem::path {
+        for (const auto& root : roots)
         {
-            const std::filesystem::path candidate = root / rel;
-            if (std::filesystem::exists(candidate))
-                return candidate;
+            if (root.empty())
+                continue;
+            for (size_t i = 0; i < count; ++i)
+            {
+                const std::filesystem::path candidate = root / rels[i];
+                if (std::filesystem::exists(candidate))
+                    return candidate;
+            }
+        }
+        return {};
+    };
+
+    std::filesystem::path p = tryRels(cliffRels, _countof(cliffRels));
+    if (!p.empty())
+        return p;
+    return tryRels(sponzaRels, _countof(sponzaRels));
+}
+
+static std::filesystem::path ResolveNormalPath(
+    const std::filesystem::path& mtlDir, const Obj::Material& m)
+{
+    if (!m.normalMapRel.empty())
+    {
+        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.normalMapRel);
+        if (!p.empty())
+            return p;
+    }
+    if (!m.displacementMapRel.empty())
+        return Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.displacementMapRel);
+    return {};
+}
+
+static std::filesystem::path ResolveDisplacementPath(
+    const std::filesystem::path& mtlDir, const Obj::Material& m, bool& outUseRoughnessAsHeight)
+{
+    outUseRoughnessAsHeight = false;
+    if (!m.displacementMapRel.empty())
+    {
+        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.displacementMapRel);
+        if (!p.empty())
+            return p;
+    }
+    if (!m.roughnessMapRel.empty())
+    {
+        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.roughnessMapRel);
+        if (!p.empty())
+        {
+            outUseRoughnessAsHeight = true;
+            return p;
         }
     }
+    const auto fromNormal = ResolveNormalPath(mtlDir, m);
+    if (!fromNormal.empty())
+        return fromNormal;
     return {};
+}
+
+void FitCameraToMesh()
+{
+    if (g_mesh.vertices.empty())
+        return;
+
+    XMFLOAT3 bmin{FLT_MAX, FLT_MAX, FLT_MAX};
+    XMFLOAT3 bmax{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    for (const Obj::MeshVertex& v : g_mesh.vertices)
+    {
+        bmin.x = (std::min)(bmin.x, v.px);
+        bmin.y = (std::min)(bmin.y, v.py);
+        bmin.z = (std::min)(bmin.z, v.pz);
+        bmax.x = (std::max)(bmax.x, v.px);
+        bmax.y = (std::max)(bmax.y, v.py);
+        bmax.z = (std::max)(bmax.z, v.pz);
+    }
+
+    const float meshScale = g_sceneIsCliffRock ? 1.0f : 0.01f;
+    const XMVECTOR mn = XMVectorScale(XMLoadFloat3(&bmin), meshScale);
+    const XMVECTOR mx = XMVectorScale(XMLoadFloat3(&bmax), meshScale);
+    const XMVECTOR center = XMVectorScale(XMVectorAdd(mn, mx), 0.5f);
+    const XMVECTOR ext = XMVectorSubtract(mx, mn);
+    float radius = XMVectorGetX(XMVector3Length(ext)) * 0.5f;
+    radius = (std::max)(radius, 0.05f);
+
+    const XMVECTOR eye = XMVectorAdd(center, XMVectorSet(radius * 0.15f, radius * 0.45f, radius * 2.2f, 0.0f));
+    XMStoreFloat3(&g_camPos, eye);
+
+    const XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(center, eye));
+    g_camPitch = asinf(XMVectorGetY(dir));
+    g_camYaw = atan2f(XMVectorGetX(dir), XMVectorGetZ(dir));
+    g_camPitch = std::clamp(g_camPitch, -XM_PIDIV2 + 0.02f, XM_PIDIV2 - 0.02f);
+
+    g_tessFarDist = (std::max)(radius * 2.5f, 4.0f);
 }
 
 static bool MaterialPathSuggestUvAnim(const std::wstring& rel)
@@ -467,27 +583,31 @@ static bool MaterialPathSuggestUvAnim(const std::wstring& rel)
 bool LoadScene()
 {
     g_sceneReady = false;
+    g_sceneIsCliffRock = false;
     g_mesh = {};
     g_matSrvPairBase.clear();
     g_gpuTextures.clear();
     g_whiteTexture.Reset();
+    g_grayDispTexture.Reset();
     g_meshVB.Reset();
     g_meshIB.Reset();
     g_matCBUpload.Reset();
     g_matCBMapped = nullptr;
     g_matCount = 0;
 
-    const std::filesystem::path objPath = FindSponzaObj();
+    const std::filesystem::path objPath = FindSceneObj();
     if (objPath.empty())
     {
         MessageBoxW(
             g_hwnd,
-            L"Не найден sponza.obj.\n\nСкопируйте папку Sponza (sponza.obj + MTL + текстуры) в каталог exe:\n"
-            L"  <папка_с_exe>\\Sponza\\sponza.obj",
-            L"Sponza",
+            L"Не найден Cliffrock_0006_120kHigh.obj или sponza.obj.\n\n"
+            L"Cliff Rock: obj + mtl в каталоге exe, текстуры в textures_\\",
+            L"Сцена",
             MB_OK | MB_ICONWARNING);
         return false;
     }
+
+    g_sceneIsCliffRock = PathLooksLikeCliffRock(objPath);
 
     std::wstring err;
     if (!Obj::LoadObj(objPath, g_mesh, err))
@@ -516,7 +636,9 @@ bool LoadScene()
 
     const std::filesystem::path mtlDir = objPath.parent_path();
     g_matSrvPairBase.assign(g_mesh.materials.size(), 0);
-    std::vector<uint8_t> matHasSpecularTex(g_mesh.materials.size(), 0);
+    std::vector<uint8_t> matHasNormalTex(g_mesh.materials.size(), 0);
+    std::vector<uint8_t> matHasDispTex(g_mesh.materials.size(), 0);
+    std::vector<uint8_t> matDispInvert(g_mesh.materials.size(), 0);
 
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), nullptr));
@@ -536,7 +658,18 @@ bool LoadScene()
     g_gpuTextures.push_back(whiteTex);
     Tex::WriteTexture2DSrv(
         g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), nextSlot + 1, g_srvDescriptorSize);
-    nextSlot += 2;
+
+    ComPtr<ID3D12Resource> grayDispTex;
+    if (!Tex::CreateSolidTexture2D(
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot + 2, g_srvDescriptorSize, 0x808080FFu,
+            grayDispTex, uploadKeep))
+    {
+        MessageBoxW(g_hwnd, L"Не удалось создать displacement по умолчанию.", L"Текстуры", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    g_grayDispTexture = grayDispTex;
+    g_gpuTextures.push_back(grayDispTex);
+    nextSlot += 3;
 
     std::unordered_map<std::wstring, ComPtr<ID3D12Resource>> texCache;
 
@@ -574,14 +707,14 @@ bool LoadScene()
 
     for (size_t i = 0; i < g_mesh.materials.size(); ++i)
     {
-        if (nextSlot + 2u > kSrvHeapCount)
+        if (nextSlot + 3u > kSrvHeapCount)
         {
             MessageBoxW(g_hwnd, L"Переполнение кучи SRV.", L"Текстуры", MB_OK | MB_ICONWARNING);
             break;
         }
 
         const uint32_t pairBase = nextSlot;
-        nextSlot += 2;
+        nextSlot += 3;
         g_matSrvPairBase[i] = pairBase;
 
         const Obj::Material& m = g_mesh.materials[i];
@@ -592,15 +725,23 @@ bool LoadScene()
         else
             bindTextureSlot(pairBase, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.diffuseMapRel));
 
-        bool specLoaded = false;
-        if (m.specularMapRel.empty())
+        const std::filesystem::path normalPath = ResolveNormalPath(mtlDir, m);
+        if (normalPath.empty())
             Tex::WriteTexture2DSrv(
                 g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase + 1, g_srvDescriptorSize);
         else
-            specLoaded =
-                bindTextureSlot(pairBase + 1, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.specularMapRel));
+            matHasNormalTex[i] = bindTextureSlot(pairBase + 1, normalPath) ? 1 : 0;
 
-        matHasSpecularTex[i] = specLoaded ? 1 : 0;
+        bool dispRough = false;
+        const std::filesystem::path dispPath = ResolveDisplacementPath(mtlDir, m, dispRough);
+        if (dispPath.empty())
+            Tex::WriteTexture2DSrv(
+                g_device.Get(), g_grayDispTexture.Get(), g_srvHeap.Get(), pairBase + 2, g_srvDescriptorSize);
+        else
+        {
+            matHasDispTex[i] = bindTextureSlot(pairBase + 2, dispPath) ? 1 : 0;
+            matDispInvert[i] = dispRough ? 1 : 0;
+        }
     }
 
     ExecuteCommandList();
@@ -629,20 +770,29 @@ bool LoadScene()
             slot->Kd = XMFLOAT4(mm.Kd[0], mm.Kd[1], mm.Kd[2], 1.0f);
             slot->UvScale = XMFLOAT2(mm.uvScale[0], mm.uvScale[1]);
             slot->UvOffset = XMFLOAT2(mm.uvOffset[0], mm.uvOffset[1]);
-            slot->Ks = XMFLOAT3(mm.Ks[0], mm.Ks[1], mm.Ks[2]);
-            slot->Ns = mm.Ns;
-            slot->UseUvAnim = MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1u : 0u;
-            slot->HasSpecularTex = matHasSpecularTex[i];
+            const float dispScale = g_sceneIsCliffRock ? 0.04f : 0.02f;
+            slot->MatFlags = XMFLOAT4(
+                dispScale,
+                1.0f,
+                MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1.0f : 0.0f,
+                matHasNormalTex[i] ? 1.0f : 0.0f);
+            slot->MatFlags2 = XMFLOAT4(
+                matHasDispTex[i] ? 1.0f : 0.0f,
+                matDispInvert[i] ? 1.0f : 0.0f,
+                0,
+                0);
         }
         else
         {
             slot->Kd = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
             slot->UvScale = XMFLOAT2(1.0f, 1.0f);
             slot->UvOffset = XMFLOAT2(0.0f, 0.0f);
-            slot->Ks = XMFLOAT3(0.2f, 0.2f, 0.2f);
-            slot->Ns = 32.0f;
+            slot->MatFlags = XMFLOAT4(0.02f, 1.0f, 0.0f, 0.0f);
+            slot->MatFlags2 = XMFLOAT4(0.0f, 0, 0, 0);
         }
     }
+
+    FitCameraToMesh();
 
     g_sceneReady = true;
     return true;
@@ -656,6 +806,10 @@ void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec
     data.TimeCamPos =
         XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
     data.UvAnimAndPad = XMFLOAT4(0.035f, 0.022f, 0.0f, 0.0f);
+    const float tessMax = g_sceneIsCliffRock ? 3.0f : 4.0f;
+    const float tessNear = g_sceneIsCliffRock ? 0.35f : 0.5f;
+    data.TessParams = XMFLOAT4(tessMax, tessNear, g_tessFarDist, 0.0f);
+    data.DebugView = XMFLOAT4(g_debugFrameView ? 1.0f : 0.0f, 0, 0, 0);
     std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
 }
 
@@ -752,14 +906,16 @@ void DrawScene(const XMMATRIX& viewProj)
     ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
     g_cmdList->SetDescriptorHeaps(1, heaps);
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
-    g_cmdList->SetPipelineState(g_pipelineGeo.Get());
+    g_cmdList->SetPipelineState(
+        (g_debugFrameView ? g_pipelineGeoWire : g_pipelineGeo).Get());
 
-    const XMMATRIX world =
-        XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+    const XMMATRIX world = g_sceneIsCliffRock
+        ? XMMatrixIdentity()
+        : XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
     WriteFrameCB(world, viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
 
-    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
     g_cmdList->IASetIndexBuffer(&g_meshIbv);
 
@@ -796,12 +952,16 @@ void DrawFrame(float dt)
     const XMMATRIX viewProj = CalcViewProj();
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
-    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipelineGeo.Get()));
+    ThrowIfFailed(g_cmdList->Reset(
+        g_cmdAlloc[g_frameIndex].Get(),
+        (g_debugFrameView ? g_pipelineGeoWire : g_pipelineGeo).Get()));
 
     GBuffer& gb = g_renderSys.GBufferTargets();
     gb.TransitionToRenderTargets(g_cmdList.Get());
 
-    const float gbClearRgb[] = {0.06f, 0.07f, 0.10f};
+    static const float kGbClearNormal[] = {0.06f, 0.07f, 0.10f};
+    static const float kGbClearDebug[] = {0.02f, 0.02f, 0.03f};
+    const float* const gbClearRgb = g_debugFrameView ? kGbClearDebug : kGbClearNormal;
     gb.ClearAndSetAsRenderTarget(g_cmdList.Get(), gbClearRgb);
 
     D3D12_VIEWPORT viewport{};
@@ -947,6 +1107,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE)
             g_running = false;
+        else if (wp == VK_F2)
+            g_debugFrameView = !g_debugFrameView;
         return 0;
     case WM_SIZE:
         if (g_swapChain && wp != SIZE_MINIMIZED)
