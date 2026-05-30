@@ -1,4 +1,4 @@
-﻿// DirectX 12: окно, FPS-камера, сцена Sponza (OBJ/MTL).
+﻿// DirectX 12: отложенный рендер, сцена из тысяч кубов/шаров, frustum culling + octree.
 
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
@@ -15,6 +15,7 @@
 
 #include "ObjLoader.h"
 #include "RenderingSystem.h"
+#include "SceneCulling.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
@@ -44,15 +45,18 @@ constexpr UINT kSrvHeapCount = 512;
 constexpr UINT kDeferredSrvBase = 400;
 constexpr UINT kCbAlign = 256;
 
+constexpr UINT kSceneCubeCount = 10000;
+constexpr UINT kSceneObjectCount = kSceneCubeCount;
+
 struct alignas(256) FrameCB
 {
     XMFLOAT4X4 World;
     XMFLOAT4X4 ViewProj;
+    XMFLOAT4X4 PrevViewProj;
     XMFLOAT4 TimeCamPos;
     XMFLOAT4 UvAnimAndPad;
     XMFLOAT4 TessParams;
     XMFLOAT4 DebugView;
-    float _PadRest[16];
 };
 
 static_assert(sizeof(FrameCB) == 256);
@@ -64,7 +68,10 @@ struct alignas(256) MatCBGPU
     XMFLOAT2 UvOffset;
     XMFLOAT4 MatFlags;
     XMFLOAT4 MatFlags2;
-    float _PadMat[48];
+    float Ns;
+    float SpecIntensity;
+    float _PadMat[2];
+    float _PadMatRest[44];
 };
 
 static_assert(sizeof(MatCBGPU) == 256);
@@ -99,31 +106,44 @@ ComPtr<ID3D12RootSignature> g_rootSignature;
 ComPtr<ID3D12PipelineState> g_pipelineGeo;
 ComPtr<ID3D12PipelineState> g_pipelineGeoWire;
 bool g_debugFrameView = false;
+bool g_frustumCulling = true;
+bool g_octreeCulling = false;
+bool g_distanceCulling = true;
+float g_maxDrawDistance = 42.0f;
 
 RenderingSystem g_renderSys;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
 
-bool g_sceneReady = false;
-Obj::LoadedMesh g_mesh{};
-ComPtr<ID3D12Resource> g_meshVB;
-ComPtr<ID3D12Resource> g_meshIB;
-D3D12_VERTEX_BUFFER_VIEW g_meshVbv{};
-D3D12_INDEX_BUFFER_VIEW g_meshIbv{};
+struct GpuMesh
+{
+    ComPtr<ID3D12Resource> vb;
+    ComPtr<ID3D12Resource> ib;
+    D3D12_VERTEX_BUFFER_VIEW vbv{};
+    D3D12_INDEX_BUFFER_VIEW ibv{};
+    UINT indexCount = 0;
+};
 
-std::vector<uint32_t> g_matSrvPairBase;
-std::vector<ComPtr<ID3D12Resource>> g_gpuTextures;
+bool g_sceneReady = false;
+GpuMesh g_gpuCube{};
+std::vector<Scene::SceneObject> g_sceneObjects;
+Scene::Octree g_octree;
+Scene::Aabb g_sceneBounds{};
+std::vector<uint32_t> g_visibleIndices;
+UINT g_lastVisibleCount = 0;
+
 ComPtr<ID3D12Resource> g_whiteTexture;
 ComPtr<ID3D12Resource> g_grayDispTexture;
-float g_tessFarDist = 12.0f;
-bool g_sceneIsCliffRock = false;
+float g_tessFarDist = 55.0f;
 ComPtr<ID3D12Resource> g_matCBUpload;
 UINT8* g_matCBMapped = nullptr;
 UINT g_matCount = 0;
+UINT g_matSrvBase = 0;
 
 ComPtr<ID3D12Resource> g_frameCBUpload;
 UINT8* g_frameCBMapped = nullptr;
+XMFLOAT4X4 g_prevViewProj{};
 
 UINT g_frameIndex = 0;
 float g_appTime = 0.0f;
@@ -302,7 +322,8 @@ ComPtr<ID3D12Resource> CreateUploadBuffer(const void* data, UINT64 size)
 
 void CreateFrameCB()
 {
-    g_frameCBUpload = CreateUploadBuffer(nullptr, sizeof(FrameCB));
+    const UINT64 frameBufSize = static_cast<UINT64>(kSceneObjectCount) * kCbAlign;
+    g_frameCBUpload = CreateUploadBuffer(nullptr, frameBufSize);
     D3D12_RANGE rr{0, 0};
     ThrowIfFailed(g_frameCBUpload->Map(0, &rr, reinterpret_cast<void**>(&g_frameCBMapped)));
 }
@@ -393,9 +414,9 @@ void CreateGeometryPipeline()
     pso.SampleMask = UINT_MAX;
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
     pso.NumRenderTargets = 3;
-    pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
-    pso.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    pso.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    pso.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    pso.RTVFormats[1] = DXGI_FORMAT_R8G8B8A8_UNORM;
+    pso.RTVFormats[2] = DXGI_FORMAT_R8G8B8A8_UNORM;
     pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     pso.SampleDesc.Count = 1;
     pso.InputLayout = {layout, _countof(layout)};
@@ -408,341 +429,102 @@ void CreateGeometryPipeline()
     createGeoPso(D3D12_FILL_MODE_WIREFRAME, g_pipelineGeoWire);
 }
 
-static void CollectSearchRoots(std::vector<std::filesystem::path>& roots)
+GpuMesh UploadMesh(const Scene::ProceduralMesh& mesh)
 {
-    auto tryAdd = [&roots](std::filesystem::path p) {
-        if (p.empty())
-            return;
-        p = p.lexically_normal();
-        for (const auto& existing : roots)
-        {
-            if (existing == p)
-                return;
-        }
-        roots.push_back(std::move(p));
-    };
-
-    tryAdd(std::filesystem::path(ExeDirectory()));
-    try
-    {
-        tryAdd(std::filesystem::current_path());
-    }
-    catch (...)
-    {
-    }
-
-    // Расширяем базы родителями — только по индексу, без изменения вектора во время range-for.
-    const size_t scanCount = roots.size();
-    for (size_t i = 0; i < scanCount; ++i)
-    {
-        std::filesystem::path walk = roots[i];
-        for (int depth = 0; depth < 4 && !walk.empty(); ++depth)
-        {
-            walk = walk.parent_path();
-            tryAdd(walk);
-        }
-    }
-
+    GpuMesh gpu{};
+    const UINT vbSize = static_cast<UINT>(mesh.vertices.size() * sizeof(Obj::MeshVertex));
+    const UINT ibSize = static_cast<UINT>(mesh.indices.size() * sizeof(uint32_t));
+    gpu.vb = CreateUploadBuffer(mesh.vertices.data(), vbSize);
+    gpu.ib = CreateUploadBuffer(mesh.indices.data(), ibSize);
+    gpu.vbv.BufferLocation = gpu.vb->GetGPUVirtualAddress();
+    gpu.vbv.SizeInBytes = vbSize;
+    gpu.vbv.StrideInBytes = sizeof(Obj::MeshVertex);
+    gpu.ibv.BufferLocation = gpu.ib->GetGPUVirtualAddress();
+    gpu.ibv.SizeInBytes = ibSize;
+    gpu.ibv.Format = DXGI_FORMAT_R32_UINT;
+    gpu.indexCount = static_cast<UINT>(mesh.indices.size());
+    return gpu;
 }
 
-static bool PathLooksLikeCliffRock(const std::filesystem::path& objPath)
+void FitCameraToScene()
 {
-    std::wstring s = objPath.filename().wstring();
-    for (wchar_t& c : s)
-        c = static_cast<wchar_t>(towlower(static_cast<wint_t>(c)));
-    return s.find(L"cliff") != std::wstring::npos;
-}
-
-static std::filesystem::path FindSceneObj()
-{
-    const std::wstring cliffRels[] = {
-        L"Cliffrock_0006_120kHigh.obj",
-        L"cliffrock/Cliffrock_0006_120kHigh.obj",
-    };
-    const std::wstring sponzaRels[] = {
-        L"Sponza\\sponza.obj",
-        L"Sponza/sponza.obj",
-        L"sponza.obj",
-    };
-
-    std::vector<std::filesystem::path> roots;
-    CollectSearchRoots(roots);
-
-    auto tryRels = [&](const std::wstring* rels, size_t count) -> std::filesystem::path {
-        for (const auto& root : roots)
-        {
-            if (root.empty())
-                continue;
-            for (size_t i = 0; i < count; ++i)
-            {
-                const std::filesystem::path candidate = root / rels[i];
-                if (std::filesystem::exists(candidate))
-                    return candidate;
-            }
-        }
-        return {};
-    };
-
-    std::filesystem::path p = tryRels(cliffRels, _countof(cliffRels));
-    if (!p.empty())
-        return p;
-    return tryRels(sponzaRels, _countof(sponzaRels));
-}
-
-static std::filesystem::path ResolveNormalPath(
-    const std::filesystem::path& mtlDir, const Obj::Material& m)
-{
-    if (!m.normalMapRel.empty())
-    {
-        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.normalMapRel);
-        if (!p.empty())
-            return p;
-    }
-    if (!m.displacementMapRel.empty())
-        return Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.displacementMapRel);
-    return {};
-}
-
-static std::filesystem::path ResolveDisplacementPath(
-    const std::filesystem::path& mtlDir, const Obj::Material& m, bool& outUseRoughnessAsHeight)
-{
-    outUseRoughnessAsHeight = false;
-    if (!m.displacementMapRel.empty())
-    {
-        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.displacementMapRel);
-        if (!p.empty())
-            return p;
-    }
-    if (!m.roughnessMapRel.empty())
-    {
-        const auto p = Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.roughnessMapRel);
-        if (!p.empty())
-        {
-            outUseRoughnessAsHeight = true;
-            return p;
-        }
-    }
-    const auto fromNormal = ResolveNormalPath(mtlDir, m);
-    if (!fromNormal.empty())
-        return fromNormal;
-    return {};
-}
-
-void FitCameraToMesh()
-{
-    if (g_mesh.vertices.empty())
-        return;
-
-    XMFLOAT3 bmin{FLT_MAX, FLT_MAX, FLT_MAX};
-    XMFLOAT3 bmax{-FLT_MAX, -FLT_MAX, -FLT_MAX};
-    for (const Obj::MeshVertex& v : g_mesh.vertices)
-    {
-        bmin.x = (std::min)(bmin.x, v.px);
-        bmin.y = (std::min)(bmin.y, v.py);
-        bmin.z = (std::min)(bmin.z, v.pz);
-        bmax.x = (std::max)(bmax.x, v.px);
-        bmax.y = (std::max)(bmax.y, v.py);
-        bmax.z = (std::max)(bmax.z, v.pz);
-    }
-
-    const float meshScale = g_sceneIsCliffRock ? 1.0f : 0.01f;
-    const XMVECTOR mn = XMVectorScale(XMLoadFloat3(&bmin), meshScale);
-    const XMVECTOR mx = XMVectorScale(XMLoadFloat3(&bmax), meshScale);
-    const XMVECTOR center = XMVectorScale(XMVectorAdd(mn, mx), 0.5f);
+    const XMVECTOR mn = XMLoadFloat3(&g_sceneBounds.min);
+    const XMVECTOR mx = XMLoadFloat3(&g_sceneBounds.max);
     const XMVECTOR ext = XMVectorSubtract(mx, mn);
+    const XMVECTOR mid = XMVectorAdd(mn, XMVectorScale(ext, 0.5f));
     float radius = XMVectorGetX(XMVector3Length(ext)) * 0.5f;
-    radius = (std::max)(radius, 0.05f);
+    radius = (std::max)(radius, 5.0f);
 
-    const XMVECTOR eye = XMVectorAdd(center, XMVectorSet(radius * 0.15f, radius * 0.45f, radius * 2.2f, 0.0f));
+    const XMVECTOR eye = XMVectorAdd(mid, XMVectorSet(0.0f, radius * 0.35f, radius * 1.35f, 0.0f));
     XMStoreFloat3(&g_camPos, eye);
 
-    const XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(center, eye));
+    const XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(mid, eye));
     g_camPitch = asinf(XMVectorGetY(dir));
     g_camYaw = atan2f(XMVectorGetX(dir), XMVectorGetZ(dir));
     g_camPitch = std::clamp(g_camPitch, -XM_PIDIV2 + 0.02f, XM_PIDIV2 - 0.02f);
-
-    g_tessFarDist = (std::max)(radius * 2.5f, 4.0f);
+    g_tessFarDist = (std::max)(radius * 1.5f, 20.0f);
 }
 
-static bool MaterialPathSuggestUvAnim(const std::wstring& rel)
-{
-    std::wstring s = rel;
-    for (wchar_t& c : s)
-        c = static_cast<wchar_t>(towlower(static_cast<wint_t>(c)));
-
-    static const wchar_t* keys[] = {
-        L"fabric", L"curtain", L"banner", L"water", L"flag", L"vines", L"leaf", L"drape", nullptr};
-    for (int k = 0; keys[k] != nullptr; ++k)
-    {
-        if (s.find(keys[k]) != std::wstring::npos)
-            return true;
-    }
-    return false;
-}
-
-bool LoadScene()
+bool BuildScene()
 {
     g_sceneReady = false;
-    g_sceneIsCliffRock = false;
-    g_mesh = {};
-    g_matSrvPairBase.clear();
-    g_gpuTextures.clear();
+    g_sceneObjects.clear();
+    g_visibleIndices.clear();
+    g_gpuCube = {};
     g_whiteTexture.Reset();
     g_grayDispTexture.Reset();
-    g_meshVB.Reset();
-    g_meshIB.Reset();
     g_matCBUpload.Reset();
     g_matCBMapped = nullptr;
     g_matCount = 0;
 
-    const std::filesystem::path objPath = FindSceneObj();
-    if (objPath.empty())
-    {
-        MessageBoxW(
-            g_hwnd,
-            L"Не найден Cliffrock_0006_120kHigh.obj или sponza.obj.\n\n"
-            L"Cliff Rock: obj + mtl в каталоге exe, текстуры в textures_\\",
-            L"Сцена",
-            MB_OK | MB_ICONWARNING);
-        return false;
-    }
+    Scene::ProceduralMesh cubeMesh{};
+    Scene::BuildUnitCube(cubeMesh);
+    g_gpuCube = UploadMesh(cubeMesh);
 
-    g_sceneIsCliffRock = PathLooksLikeCliffRock(objPath);
+    Scene::Aabb spawnRegion{};
+    spawnRegion.min = XMFLOAT3{-55.0f, 0.5f, -55.0f};
+    spawnRegion.max = XMFLOAT3{55.0f, 28.0f, 55.0f};
+    Scene::ScatterCubesAndSpheres(
+        g_sceneObjects, kSceneCubeCount, 0, spawnRegion, 20260323u);
 
-    std::wstring err;
-    if (!Obj::LoadObj(objPath, g_mesh, err))
-    {
-        MessageBoxW(g_hwnd, err.c_str(), L"OBJ", MB_OK | MB_ICONERROR);
-        return false;
-    }
-
-    if (g_mesh.vertices.empty() || g_mesh.indices.empty() || g_mesh.submeshes.empty())
-    {
-        MessageBoxW(g_hwnd, L"OBJ пустой или без граней.", L"OBJ", MB_OK | MB_ICONERROR);
-        return false;
-    }
-
-    const UINT vbSize = static_cast<UINT>(g_mesh.vertices.size() * sizeof(Obj::MeshVertex));
-    const UINT ibSize = static_cast<UINT>(g_mesh.indices.size() * sizeof(uint32_t));
-    g_meshVB = CreateUploadBuffer(g_mesh.vertices.data(), vbSize);
-    g_meshIB = CreateUploadBuffer(g_mesh.indices.data(), ibSize);
-
-    g_meshVbv.BufferLocation = g_meshVB->GetGPUVirtualAddress();
-    g_meshVbv.SizeInBytes = vbSize;
-    g_meshVbv.StrideInBytes = sizeof(Obj::MeshVertex);
-    g_meshIbv.BufferLocation = g_meshIB->GetGPUVirtualAddress();
-    g_meshIbv.SizeInBytes = ibSize;
-    g_meshIbv.Format = DXGI_FORMAT_R32_UINT;
-
-    const std::filesystem::path mtlDir = objPath.parent_path();
-    g_matSrvPairBase.assign(g_mesh.materials.size(), 0);
-    std::vector<uint8_t> matHasNormalTex(g_mesh.materials.size(), 0);
-    std::vector<uint8_t> matHasDispTex(g_mesh.materials.size(), 0);
-    std::vector<uint8_t> matDispInvert(g_mesh.materials.size(), 0);
+    g_sceneBounds = spawnRegion;
+    for (const Scene::SceneObject& obj : g_sceneObjects)
+        g_sceneBounds.Merge(obj.worldBounds);
+    g_sceneBounds.min.x -= 2.0f;
+    g_sceneBounds.min.y -= 2.0f;
+    g_sceneBounds.min.z -= 2.0f;
+    g_sceneBounds.max.x += 2.0f;
+    g_sceneBounds.max.y += 2.0f;
+    g_sceneBounds.max.z += 2.0f;
+    g_octree.Build(g_sceneObjects, g_sceneBounds);
 
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), nullptr));
 
     std::vector<ComPtr<ID3D12Resource>> uploadKeep;
-    uint32_t nextSlot = 0;
+    g_matSrvBase = 0;
 
     ComPtr<ID3D12Resource> whiteTex;
     if (!Tex::CreateSolidTexture2D(
-            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot, g_srvDescriptorSize, 0xFFFFFFFFu,
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), g_matSrvBase, g_srvDescriptorSize, 0xFFFFFFFFu,
             whiteTex, uploadKeep))
     {
         MessageBoxW(g_hwnd, L"Не удалось создать текстуру по умолчанию.", L"Текстуры", MB_OK | MB_ICONERROR);
         return false;
     }
     g_whiteTexture = whiteTex;
-    g_gpuTextures.push_back(whiteTex);
     Tex::WriteTexture2DSrv(
-        g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), nextSlot + 1, g_srvDescriptorSize);
+        g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), g_matSrvBase + 1, g_srvDescriptorSize);
 
     ComPtr<ID3D12Resource> grayDispTex;
     if (!Tex::CreateSolidTexture2D(
-            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot + 2, g_srvDescriptorSize, 0x808080FFu,
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), g_matSrvBase + 2, g_srvDescriptorSize, 0x808080FFu,
             grayDispTex, uploadKeep))
     {
         MessageBoxW(g_hwnd, L"Не удалось создать displacement по умолчанию.", L"Текстуры", MB_OK | MB_ICONERROR);
         return false;
     }
     g_grayDispTexture = grayDispTex;
-    g_gpuTextures.push_back(grayDispTex);
-    nextSlot += 3;
-
-    std::unordered_map<std::wstring, ComPtr<ID3D12Resource>> texCache;
-
-    auto bindTextureSlot = [&](UINT slot, const std::filesystem::path& texPath) -> bool {
-        if (!std::filesystem::exists(texPath))
-        {
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
-            return false;
-        }
-        const std::wstring key = texPath.lexically_normal().wstring();
-        const auto cached = texCache.find(key);
-        if (cached != texCache.end())
-        {
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), cached->second.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
-            return true;
-        }
-
-        ComPtr<ID3D12Resource> texRes;
-        std::wstring terr;
-        if (!Tex::CreateTexture2DFromFile(
-                g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize, texPath,
-                texRes, uploadKeep, terr))
-        {
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), slot, g_srvDescriptorSize);
-            return false;
-        }
-
-        g_gpuTextures.push_back(texRes);
-        texCache[key] = texRes;
-        return true;
-    };
-
-    for (size_t i = 0; i < g_mesh.materials.size(); ++i)
-    {
-        if (nextSlot + 3u > kSrvHeapCount)
-        {
-            MessageBoxW(g_hwnd, L"Переполнение кучи SRV.", L"Текстуры", MB_OK | MB_ICONWARNING);
-            break;
-        }
-
-        const uint32_t pairBase = nextSlot;
-        nextSlot += 3;
-        g_matSrvPairBase[i] = pairBase;
-
-        const Obj::Material& m = g_mesh.materials[i];
-
-        if (m.diffuseMapRel.empty())
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase, g_srvDescriptorSize);
-        else
-            bindTextureSlot(pairBase, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.diffuseMapRel));
-
-        const std::filesystem::path normalPath = ResolveNormalPath(mtlDir, m);
-        if (normalPath.empty())
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase + 1, g_srvDescriptorSize);
-        else
-            matHasNormalTex[i] = bindTextureSlot(pairBase + 1, normalPath) ? 1 : 0;
-
-        bool dispRough = false;
-        const std::filesystem::path dispPath = ResolveDisplacementPath(mtlDir, m, dispRough);
-        if (dispPath.empty())
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_grayDispTexture.Get(), g_srvHeap.Get(), pairBase + 2, g_srvDescriptorSize);
-        else
-        {
-            matHasDispTex[i] = bindTextureSlot(pairBase + 2, dispPath) ? 1 : 0;
-            matDispInvert[i] = dispRough ? 1 : 0;
-        }
-    }
 
     ExecuteCommandList();
     uploadKeep.clear();
@@ -751,10 +533,7 @@ bool LoadScene()
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), g_pipelineGeo.Get()));
     ThrowIfFailed(g_cmdList->Close());
 
-    g_matCount = static_cast<UINT>(g_mesh.materials.size());
-    if (g_matCount == 0)
-        g_matCount = 1;
-
+    g_matCount = kSceneObjectCount;
     const UINT64 matBufSize = static_cast<UINT64>(g_matCount) * kCbAlign;
     g_matCBUpload = CreateUploadBuffer(nullptr, matBufSize);
     D3D12_RANGE mr{0, 0};
@@ -764,53 +543,35 @@ bool LoadScene()
     {
         MatCBGPU* slot = reinterpret_cast<MatCBGPU*>(g_matCBMapped + static_cast<size_t>(i) * kCbAlign);
         std::memset(slot, 0, sizeof(MatCBGPU));
-        if (i < g_mesh.materials.size())
-        {
-            const Obj::Material& mm = g_mesh.materials[i];
-            slot->Kd = XMFLOAT4(mm.Kd[0], mm.Kd[1], mm.Kd[2], 1.0f);
-            slot->UvScale = XMFLOAT2(mm.uvScale[0], mm.uvScale[1]);
-            slot->UvOffset = XMFLOAT2(mm.uvOffset[0], mm.uvOffset[1]);
-            const float dispScale = g_sceneIsCliffRock ? 0.04f : 0.02f;
-            slot->MatFlags = XMFLOAT4(
-                dispScale,
-                1.0f,
-                MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1.0f : 0.0f,
-                matHasNormalTex[i] ? 1.0f : 0.0f);
-            slot->MatFlags2 = XMFLOAT4(
-                matHasDispTex[i] ? 1.0f : 0.0f,
-                matDispInvert[i] ? 1.0f : 0.0f,
-                0,
-                0);
-        }
-        else
-        {
-            slot->Kd = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
-            slot->UvScale = XMFLOAT2(1.0f, 1.0f);
-            slot->UvOffset = XMFLOAT2(0.0f, 0.0f);
-            slot->MatFlags = XMFLOAT4(0.02f, 1.0f, 0.0f, 0.0f);
-            slot->MatFlags2 = XMFLOAT4(0.0f, 0, 0, 0);
-        }
+        const Scene::SceneObject& obj = g_sceneObjects[i];
+        slot->Kd = obj.color;
+        slot->UvScale = XMFLOAT2(1.0f, 1.0f);
+        slot->UvOffset = XMFLOAT2(0.0f, 0.0f);
+        slot->MatFlags = XMFLOAT4(0.0f, 1.0f, 0.0f, 0.0f);
+        slot->MatFlags2 = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+        slot->Ns = 32.0f;
+        slot->SpecIntensity = 0.35f;
     }
 
-    FitCameraToMesh();
-
+    FitCameraToScene();
+    g_prevViewProj = XMFLOAT4X4{};
     g_sceneReady = true;
     return true;
 }
 
-void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
+void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec, uint32_t slotIndex)
 {
     FrameCB data{};
     XMStoreFloat4x4(&data.World, world);
     XMStoreFloat4x4(&data.ViewProj, viewProj);
-    data.TimeCamPos =
-        XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
-    data.UvAnimAndPad = XMFLOAT4(0.035f, 0.022f, 0.0f, 0.0f);
-    const float tessMax = g_sceneIsCliffRock ? 3.0f : 4.0f;
-    const float tessNear = g_sceneIsCliffRock ? 0.35f : 0.5f;
-    data.TessParams = XMFLOAT4(tessMax, tessNear, g_tessFarDist, 0.0f);
+    data.PrevViewProj = g_prevViewProj;
+    data.TimeCamPos = XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
+    data.UvAnimAndPad = XMFLOAT4(0.0f, 0.0f, 0.0f, 0.0f);
+    data.TessParams = XMFLOAT4(1.0f, 1.0f, g_tessFarDist, 0.0f);
     data.DebugView = XMFLOAT4(g_debugFrameView ? 1.0f : 0.0f, 0, 0, 0);
-    std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
+
+    FrameCB* dst = reinterpret_cast<FrameCB*>(g_frameCBMapped + static_cast<size_t>(slotIndex) * kCbAlign);
+    std::memcpy(dst, &data, sizeof(FrameCB));
 }
 
 XMVECTOR CameraForwardVector()
@@ -819,15 +580,23 @@ XMVECTOR CameraForwardVector()
         sinf(g_camYaw) * cosf(g_camPitch), sinf(g_camPitch), cosf(g_camYaw) * cosf(g_camPitch), 0.0f));
 }
 
-XMMATRIX CalcViewProj()
+XMMATRIX CalcView()
 {
     const XMVECTOR eye = XMLoadFloat3(&g_camPos);
     const XMVECTOR dir = CameraForwardVector();
     const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-    const XMMATRIX view = XMMatrixLookToLH(eye, dir, up);
+    return XMMatrixLookToLH(eye, dir, up);
+}
+
+XMMATRIX CalcProjection()
+{
     const float aspect = static_cast<float>(g_width) / static_cast<float>((std::max)(1u, g_height));
-    const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.0f);
-    return view * proj;
+    return XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.0f);
+}
+
+XMMATRIX CalcViewProj()
+{
+    return CalcView() * CalcProjection();
 }
 
 void UpdateCamera(float dt)
@@ -835,7 +604,7 @@ void UpdateCamera(float dt)
     if (!g_hwnd || dt <= 0.0f)
         return;
 
-    constexpr float moveSpeed = 4.0f;
+    constexpr float moveSpeed = 14.0f;
     constexpr float lookSpeed = 0.0022f;
 
     if ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0)
@@ -898,41 +667,81 @@ void UpdateCamera(float dt)
     }
 }
 
-void DrawScene(const XMMATRIX& viewProj)
+void UpdateWindowTitle()
+{
+    if (!g_hwnd)
+        return;
+
+    const wchar_t* cullMode = L"выкл";
+    if (g_frustumCulling || g_distanceCulling)
+    {
+        if (g_frustumCulling && g_octreeCulling)
+            cullMode = L"frustum+octree";
+        else if (g_frustumCulling)
+            cullMode = L"frustum";
+        else
+            cullMode = L"—";
+    }
+
+    wchar_t title[320];
+    swprintf_s(
+        title,
+        L"SecondSem CG — %u кубов | видно %u | cull: %s | dist<=%.0f %s | F2 wire F3 frustum F4 octree F5 distance",
+        kSceneObjectCount,
+        g_lastVisibleCount,
+        cullMode,
+        g_maxDrawDistance,
+        g_distanceCulling ? L"ON" : L"OFF");
+    SetWindowTextW(g_hwnd, title);
+}
+
+void DrawScene(const XMMATRIX& view, const XMMATRIX& proj)
 {
     if (!g_sceneReady)
         return;
+
+    const XMMATRIX viewProj = view * proj;
+
+    Scene::Frustum frustum{};
+    frustum.FromViewAndProjection(view, proj);
+    Scene::CollectVisibleObjects(
+        g_sceneObjects,
+        frustum,
+        g_frustumCulling,
+        g_octreeCulling,
+        g_octree,
+        g_camPos,
+        g_maxDrawDistance,
+        g_distanceCulling,
+        g_visibleIndices);
+    g_lastVisibleCount = static_cast<UINT>(g_visibleIndices.size());
 
     ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
     g_cmdList->SetDescriptorHeaps(1, heaps);
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
     g_cmdList->SetPipelineState(
         (g_debugFrameView ? g_pipelineGeoWire : g_pipelineGeo).Get());
-
-    const XMMATRIX world = g_sceneIsCliffRock
-        ? XMMatrixIdentity()
-        : XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
-    WriteFrameCB(world, viewProj, g_appTime);
-    g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
-
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_3_CONTROL_POINT_PATCHLIST);
-    g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
-    g_cmdList->IASetIndexBuffer(&g_meshIbv);
 
     const D3D12_GPU_DESCRIPTOR_HANDLE srvHeapStart = g_srvHeap->GetGPUDescriptorHandleForHeapStart();
-    for (const Obj::Submesh& sm : g_mesh.submeshes)
+    D3D12_GPU_DESCRIPTOR_HANDLE table = srvHeapStart;
+    table.ptr += static_cast<SIZE_T>(g_matSrvBase) * g_srvDescriptorSize;
+
+    for (uint32_t objIndex : g_visibleIndices)
     {
-        if (sm.materialIndex >= g_matSrvPairBase.size())
-            continue;
+        const Scene::SceneObject& obj = g_sceneObjects[objIndex];
+        const XMMATRIX world = XMMatrixScaling(obj.uniformScale, obj.uniformScale, obj.uniformScale) *
+            XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
 
+        WriteFrameCB(world, viewProj, g_appTime, objIndex);
         g_cmdList->SetGraphicsRootConstantBufferView(
-            1, g_matCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(sm.materialIndex) * kCbAlign);
-
-        const UINT pairBase = g_matSrvPairBase[sm.materialIndex];
-        D3D12_GPU_DESCRIPTOR_HANDLE table = srvHeapStart;
-        table.ptr += static_cast<SIZE_T>(pairBase) * g_srvDescriptorSize;
+            0, g_frameCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(objIndex) * kCbAlign);
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            1, g_matCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(objIndex) * kCbAlign);
         g_cmdList->SetGraphicsRootDescriptorTable(2, table);
-        g_cmdList->DrawIndexedInstanced(sm.indexCount, 1, sm.indexStart, 0, 0);
+        g_cmdList->IASetVertexBuffers(0, 1, &g_gpuCube.vbv);
+        g_cmdList->IASetIndexBuffer(&g_gpuCube.ibv);
+        g_cmdList->DrawIndexedInstanced(g_gpuCube.indexCount, 1, 0, 0, 0);
     }
 }
 
@@ -949,7 +758,9 @@ void DrawFrame(float dt)
 
     UpdateCamera(dt);
     g_appTime += dt;
-    const XMMATRIX viewProj = CalcViewProj();
+    const XMMATRIX view = CalcView();
+    const XMMATRIX proj = CalcProjection();
+    const XMMATRIX viewProj = view * proj;
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
     ThrowIfFailed(g_cmdList->Reset(
@@ -957,12 +768,12 @@ void DrawFrame(float dt)
         (g_debugFrameView ? g_pipelineGeoWire : g_pipelineGeo).Get()));
 
     GBuffer& gb = g_renderSys.GBufferTargets();
-    gb.TransitionToRenderTargets(g_cmdList.Get());
+    gb.TransitionGeometryToRenderTargets(g_cmdList.Get());
 
     static const float kGbClearNormal[] = {0.06f, 0.07f, 0.10f};
     static const float kGbClearDebug[] = {0.02f, 0.02f, 0.03f};
     const float* const gbClearRgb = g_debugFrameView ? kGbClearDebug : kGbClearNormal;
-    gb.ClearAndSetAsRenderTarget(g_cmdList.Get(), gbClearRgb);
+    gb.ClearAndSetGeometryRenderTargets(g_cmdList.Get(), gbClearRgb);
 
     D3D12_VIEWPORT viewport{};
     viewport.Width = static_cast<float>(g_width);
@@ -972,9 +783,9 @@ void DrawFrame(float dt)
     g_cmdList->RSSetViewports(1, &viewport);
     g_cmdList->RSSetScissorRects(1, &scissor);
 
-    DrawScene(viewProj);
+    DrawScene(view, proj);
 
-    gb.TransitionToShaderResource(g_cmdList.Get());
+    gb.TransitionGeometryToShaderResource(g_cmdList.Get());
 
     ComPtr<ID3D12Resource> backBuffer = g_renderTargets[g_frameIndex];
     const D3D12_RESOURCE_STATES rtBefore =
@@ -989,6 +800,11 @@ void DrawFrame(float dt)
     XMStoreFloat3(&camForward, CameraForwardVector());
     g_renderSys.UploadFrameConstants(g_camPos, camForward, g_width, g_height);
     g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
+
+    XMFLOAT4X4 currentViewProj{};
+    XMStoreFloat4x4(&currentViewProj, viewProj);
+    g_prevViewProj = currentViewProj;
+    UpdateWindowTitle();
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1087,7 +903,7 @@ void InitD3D(HWND hwnd)
         kDeferredSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
-    LoadScene();
+    BuildScene();
 }
 
 void ShutdownD3D()
@@ -1109,6 +925,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             g_running = false;
         else if (wp == VK_F2)
             g_debugFrameView = !g_debugFrameView;
+        else if (wp == VK_F3)
+            g_frustumCulling = !g_frustumCulling;
+        else if (wp == VK_F4)
+            g_octreeCulling = !g_octreeCulling;
+        else if (wp == VK_F5)
+            g_distanceCulling = !g_distanceCulling;
         return 0;
     case WM_SIZE:
         if (g_swapChain && wp != SIZE_MINIMIZED)
@@ -1136,14 +958,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     wc.lpfnWndProc = WndProc;
     wc.hInstance = GetModuleHandleW(nullptr);
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"SecondSemCG_Sponza";
+    wc.lpszClassName = L"SecondSemCG_Instancing";
     RegisterClassExW(&wc);
 
     RECT windowRect{0, 0, static_cast<LONG>(kClientW), static_cast<LONG>(kClientH)};
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
     g_hwnd = CreateWindowExW(
-        0, wc.lpszClassName, L"SecondSem CG — Sponza: текстуры, MTL, тайлинг, UV-анимация", WS_OVERLAPPEDWINDOW,
+        0, wc.lpszClassName, L"SecondSem CG — 10000 кубов, frustum culling, octree", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, windowRect.right - windowRect.left, windowRect.bottom - windowRect.top,
         nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd)

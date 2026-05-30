@@ -1,4 +1,13 @@
-﻿  LINK : не найден или не выполнена сборка x64\Debug\SecondSem_CG.exe при последней инкрементной компоновке; выполняется полная компоновка
-  SecondSem_CG.vcxproj -> C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.exe
-  Скопировано файлов:         1.
-  Скопировано файлов:         1.
+﻿  SecondSem_CG.cpp
+C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\SecondSem_CG.cpp(960,8): error C2039: "TransitionToRenderTargets": не является членом "GBuffer".
+      C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\GBuffer.h(13,7):
+       см. объявление "GBuffer"
+  
+C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\SecondSem_CG.cpp(965,8): error C2039: "ClearAndSetAsRenderTarget": не является членом "GBuffer".
+      C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\GBuffer.h(13,7):
+       см. объявление "GBuffer"
+  
+C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\SecondSem_CG.cpp(977,8): error C2039: "TransitionToShaderResource": не является членом "GBuffer".
+      C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\GBuffer.h(13,7):
+       см. объявление "GBuffer"
+  

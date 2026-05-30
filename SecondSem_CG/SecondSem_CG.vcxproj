@@ -90,10 +90,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" "$(OutDir)"
-if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" "$(OutDir)textures_\"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -113,10 +110,7 @@ if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" 
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" "$(OutDir)"
-if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" "$(OutDir)textures_\"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -134,10 +128,7 @@ if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" 
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" "$(OutDir)"
-if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" "$(OutDir)textures_\"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -157,14 +148,12 @@ if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" 
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.obj" "$(OutDir)"
-if exist "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" copy /Y "$(ProjectDir)..\Cliffrock_0006_120kHigh.mtl" "$(OutDir)"
-if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" "$(OutDir)textures_\"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ObjLoader.cpp" />
+    <ClCompile Include="SceneCulling.cpp" />
     <ClCompile Include="SecondSem_CG.cpp" />
     <ClCompile Include="TextureUtil.cpp" />
     <ClCompile Include="GBuffer.cpp" />

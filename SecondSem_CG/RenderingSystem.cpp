@@ -118,7 +118,7 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
 {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 3;
+    range.NumDescriptors = 5;
     range.BaseShaderRegister = 0;
     range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 

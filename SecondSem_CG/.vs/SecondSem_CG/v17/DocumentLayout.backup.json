@@ -3,12 +3,20 @@
   "WorkspaceRootPath": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
-      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|solutionrelative:GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SceneCulling.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|solutionrelative:SceneCulling.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|solutionrelative:Deferred.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG.vcxproj|solutionrelative:GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
   "DocumentGroupContainers": [
@@ -18,11 +26,37 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 1,
           "Children": [
             {
               "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "SecondSem_CG.cpp",
+              "DocumentMoniker": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SecondSem_CG.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG.cpp",
+              "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SecondSem_CG.cpp",
+              "RelativeToolTip": "SecondSem_CG.cpp",
+              "ViewState": "AgIAAHgDAAAAAAAAAIAwwIkDAAAOAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-30T11:40:42.035Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "SceneCulling.cpp",
+              "DocumentMoniker": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SceneCulling.cpp",
+              "RelativeDocumentMoniker": "SceneCulling.cpp",
+              "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SceneCulling.cpp",
+              "RelativeToolTip": "SceneCulling.cpp",
+              "ViewState": "AgIAAF0AAAAAAAAAAIAwwF8AAAAEAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-05-30T07:51:00.491Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
               "Title": "GBuffer.cpp",
               "DocumentMoniker": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\GBuffer.cpp",
               "RelativeDocumentMoniker": "GBuffer.cpp",
@@ -30,20 +64,20 @@
               "RelativeToolTip": "GBuffer.cpp",
               "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-23T09:14:07.996Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-23T09:14:07.996Z"
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 2,
               "Title": "Deferred.hlsl",
               "DocumentMoniker": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl",
               "RelativeDocumentMoniker": "Deferred.hlsl",
               "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl",
               "RelativeToolTip": "Deferred.hlsl",
-              "ViewState": "AgIAAC0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAAAIBAAAAAAAAAAAAAPwAAAAMAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-05-23T09:13:31.149Z"
+              "WhenOpened": "2026-05-23T09:13:31.149Z",
+              "EditorCaption": ""
             }
           ]
         }

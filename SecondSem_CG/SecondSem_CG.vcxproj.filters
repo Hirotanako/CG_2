@@ -12,6 +12,9 @@
     <ClCompile Include="ObjLoader.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="SceneCulling.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
     <ClCompile Include="SecondSem_CG.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>

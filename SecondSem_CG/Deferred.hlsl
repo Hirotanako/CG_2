@@ -4,11 +4,11 @@ cbuffer FrameCB : register(b0)
 {
     row_major float4x4 World;
     row_major float4x4 ViewProj;
+    row_major float4x4 PrevViewProj;
     float4 TimeCamPos;     // x=time, yzw=camera world pos
     float4 UvAnimAndPad;
     float4 TessParams;     // x=maxFactor, y=minDist, z=maxDist
     float4 DebugView;      // x=1 — каркас (wireframe), без текстур
-    float _PadRest[16];
 };
 
 cbuffer MatCB : register(b1)
@@ -18,7 +18,10 @@ cbuffer MatCB : register(b1)
     float2 UvOffset;
     float4 MatFlags;       // x=dispScale, y=normalStrength, z=useUvAnim, w=hasNormalMap
     float4 MatFlags2;      // x=hasDispMap, y=invert (roughness как height)
-    float _PadMat[48];
+    float Ns;
+    float SpecIntensity;
+    float2 _PadMat;
+    float _PadMatRest[44];
 };
 
 Texture2D Albedo : register(t0);
@@ -165,12 +168,28 @@ DSOut DSMain(HSConstantOutput tess, const OutputPatch<HSControlPoint, 3> patch, 
     return o;
 }
 
+// Killzone-style G-buffer (geometry → RT1..RT3)
 struct GeoRtOut
 {
-    float4 albedo : SV_Target0;
-    float4 normal : SV_Target1;
-    float4 position : SV_Target2;
+    float4 normalPacked : SV_Target0; // RT1: N.x in RG, N.y in BA (FP16)
+    float4 motionSpec : SV_Target1;   // RT2: motion.xy, spec power, spec intensity
+    float4 albedoOcc : SV_Target2;     // RT3: albedo.rgb, sun occlusion
 };
+
+float4 PackNormalKillzone(float3 N)
+{
+    N = normalize(N);
+    return float4(N.x, N.y, N.y, N.x);
+}
+
+float2 CalcScreenMotion(float3 posW)
+{
+    float4 c = mul(float4(posW, 1.0f), ViewProj);
+    float2 ndc = c.xy / max(c.w, 1e-5);
+    float4 p = mul(float4(posW, 1.0f), PrevViewProj);
+    float2 pndc = p.xy / max(p.w, 1e-5);
+    return (ndc - pndc) * 0.5f;
+}
 
 GeoRtOut GeometryPS(DSOut input)
 {
@@ -179,26 +198,31 @@ GeoRtOut GeometryPS(DSOut input)
 
     if (IsFrameDebug())
     {
-        o.albedo = float4(0.15f, 0.92f, 1.0f, 1);
-        o.normal = float4(N * 0.5f + 0.5f, 0);
-        o.position = float4(input.posW, 1);
+        o.normalPacked = PackNormalKillzone(N);
+        o.motionSpec = float4(0, 0, 0, 0);
+        o.albedoOcc = float4(0.15f, 0.92f, 1.0f, 1);
         return o;
     }
 
     float2 muv = MaterialUv(input.uv, TimeCamPos.x);
     float3 a = Albedo.Sample(Samp, muv).rgb * Kd.rgb;
     N = ApplyNormalMap(input.nrmW, input.tanW, muv);
-    o.albedo = float4(a, 1);
-    o.normal = float4(N, 0);
-    o.position = float4(input.posW, 1);
+
+    o.normalPacked = PackNormalKillzone(N);
+    float2 motion = CalcScreenMotion(input.posW);
+    float specP = saturate(Ns / 128.0f);
+    float specI = saturate(SpecIntensity);
+    o.motionSpec = float4(motion, specP, specI);
+    o.albedoOcc = float4(a, 1.0f);
     return o;
 }
 
-// --- Lighting pass ---
+// --- Lighting / composite (RT0 = light accumulation) ---
 
-Texture2D GAlbedo : register(t0);
-Texture2D GNormal : register(t1);
-Texture2D GPos : register(t2);
+Texture2D GDepth : register(t0);
+Texture2D GNormalPacked : register(t2);
+Texture2D GMotionSpec : register(t3);
+Texture2D GDiffuseOcc : register(t4);
 SamplerState GSamp : register(s0);
 
 #define LIGHT_DIR 0
@@ -222,6 +246,7 @@ cbuffer LightingCB : register(b0)
     float4 InvScreen_pad;
     uint LightCount;
     uint3 padHdr;
+    row_major float4x4 InvViewProj;
     GpuLight Lights[MAX_LIGHTS];
 };
 
@@ -240,22 +265,44 @@ FsOut LightingFullscreenVS(uint vid : SV_VertexID)
     return o;
 }
 
+float3 UnpackNormalKillzone(float4 packed)
+{
+    float x = packed.r;
+    float y = packed.a;
+    float z = sqrt(saturate(1.0f - x * x - y * y));
+    return normalize(float3(x, y, z));
+}
+
+float3 ReconstructWorldPos(float2 uv, float depth)
+{
+    float4 ndc = float4(uv.x * 2.0f - 1.0f, 1.0f - uv.y * 2.0f, depth, 1.0f);
+    float4 w = mul(ndc, InvViewProj);
+    return w.xyz / w.w;
+}
+
+// RT0: RGB = lighting, A = intensity (Killzone layout)
 float4 LightingPS(FsOut pin) : SV_Target0
 {
-    float3 alb = GAlbedo.Sample(GSamp, pin.uv).rgb;
-    float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
-    float3 P = GPos.Sample(GSamp, pin.uv).xyz;
+    float depth = GDepth.Sample(GSamp, pin.uv).r;
+    float4 nPack = GNormalPacked.Sample(GSamp, pin.uv);
+    float4 ms = GMotionSpec.Sample(GSamp, pin.uv);
+    float4 diffOcc = GDiffuseOcc.Sample(GSamp, pin.uv);
+
+    float3 alb = diffOcc.rgb;
+    float sunOcc = diffOcc.a;
+    float3 N = UnpackNormalKillzone(nPack);
+    float3 P = ReconstructWorldPos(pin.uv, depth);
 
     if (LightCount == 0)
-        return float4(alb, 1.f);
+        return float4(alb * sunOcc, 1.0f);
 
-    float3 color = alb * 0.035f;
-
+    float3 color = alb * sunOcc * 0.035f;
     if (dot(N, N) < 1e-6f)
-        return float4(color, 1.f);
+        return float4(color, 1.0f);
 
-    N = normalize(N);
     float3 V = normalize(CameraPos_pad.xyz - P);
+    float specPower = lerp(4.0f, 128.0f, ms.b);
+    float specMul = ms.a;
 
     for (uint i = 0; i < LightCount; ++i)
     {
@@ -298,8 +345,19 @@ float4 LightingPS(FsOut pin) : SV_Target0
 
         float diff = saturate(dot(N, Ldir));
         float3 H = normalize(Ldir + V);
-        float spec = pow(saturate(dot(N, H)), 48.f) * 0.28f;
+        float spec = pow(saturate(dot(N, H)), specPower) * 0.28f * specMul;
         color += (alb * diff + spec) * Lc * I * att;
     }
-    return float4(color, 1.f);
+
+    float intensity = saturate(max(color.r, max(color.g, color.b)));
+    return float4(color, intensity);
+}
+
+Texture2D GLightAccum : register(t0);
+SamplerState CSamp : register(s0);
+
+float4 CompositePS(FsOut pin) : SV_Target0
+{
+    float4 L = GLightAccum.Sample(CSamp, pin.uv);
+    return float4(L.rgb, 1.0f);
 }
