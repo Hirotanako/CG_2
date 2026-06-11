@@ -44,8 +44,9 @@ struct LightingCBGPU
     XMFLOAT4 invScreen_pad{};
     UINT lightCount = 0;
     UINT padHdr[3]{};
+    XMFLOAT4X4 invViewProj{};
     LightGpu lights[8]{};
-    float tailPad[52]{}; // до 768 байт (выравнивание CB D3D12)
+    float tailPad[36]{};
 };
 
 static_assert(sizeof(LightingCBGPU) == 768);
@@ -100,17 +101,6 @@ void RenderingSystem::WriteDefaultLights()
 {
     LightingCBGPU cb{};
     cb.lightCount = 0;
-
-    cb.lights[1].type = LIGHT_POINT;
-    cb.lights[1].position_range = XMFLOAT4(0.f, 4.5f, 2.f, 22.f);
-    cb.lights[1].color_intensity = XMFLOAT4(0.12f, 1.f, 0.22f, 5.5f);
-
-    XMVECTOR sunDir = XMVector3Normalize(XMVectorSet(0.35f, 0.82f, 0.45f, 0.f));
-    cb.lights[2].type = LIGHT_DIR;
-    XMStoreFloat4(&cb.lights[2].direction_cosOuter, sunDir);
-    cb.lights[2].direction_cosOuter.w = 0.f;
-    cb.lights[2].color_intensity = XMFLOAT4(0.35f, 0.55f, 1.f, 0.38f);
-
     std::memcpy(m_lightingCBMapped, &cb, sizeof(cb));
 }
 
@@ -224,6 +214,7 @@ void RenderingSystem::Resize(
 void RenderingSystem::UploadFrameConstants(
     const XMFLOAT3& cameraPos,
     const XMFLOAT3& cameraForward,
+    const XMFLOAT4X4& invViewProj,
     UINT screenW,
     UINT screenH)
 {
@@ -232,9 +223,8 @@ void RenderingSystem::UploadFrameConstants(
     const float iw = screenW > 0 ? 1.f / static_cast<float>(screenW) : 1.f;
     const float ih = screenH > 0 ? 1.f / static_cast<float>(screenH) : 1.f;
     cb->invScreen_pad = XMFLOAT4(iw, ih, 0.f, 0.f);
-
+    cb->invViewProj = invViewProj;
     cb->lightCount = 0;
-    (void)cameraPos;
     (void)cameraForward;
 }
 

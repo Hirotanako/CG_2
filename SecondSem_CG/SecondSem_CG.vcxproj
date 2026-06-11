@@ -90,7 +90,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)OctreeViz.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -110,7 +110,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)OctreeViz.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -128,7 +128,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)OctreeViz.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,7 +148,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)OctreeViz.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

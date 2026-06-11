@@ -76,23 +76,6 @@ void AddTriangle(
     mesh.indices.push_back(base + 2);
 }
 
-int ChildIndexForPoint(const Aabb& nodeBounds, const XMFLOAT3& p)
-{
-    const XMFLOAT3 center{
-        (nodeBounds.min.x + nodeBounds.max.x) * 0.5f,
-        (nodeBounds.min.y + nodeBounds.max.y) * 0.5f,
-        (nodeBounds.min.z + nodeBounds.max.z) * 0.5f};
-
-    int idx = 0;
-    if (p.x >= center.x)
-        idx |= 1;
-    if (p.y >= center.y)
-        idx |= 2;
-    if (p.z >= center.z)
-        idx |= 4;
-    return idx;
-}
-
 Aabb ChildBounds(const Aabb& parent, int childIndex)
 {
     const XMFLOAT3 center{
@@ -120,6 +103,43 @@ Aabb ChildBounds(const Aabb& parent, int childIndex)
         child.max.z = center.z;
 
     return child;
+}
+
+Aabb MakeCubicBounds(const Aabb& bounds, float pad)
+{
+    const float cx = (bounds.min.x + bounds.max.x) * 0.5f;
+    const float cy = (bounds.min.y + bounds.max.y) * 0.5f;
+    const float cz = (bounds.min.z + bounds.max.z) * 0.5f;
+    const float ex = (bounds.max.x - bounds.min.x) * 0.5f;
+    const float ey = (bounds.max.y - bounds.min.y) * 0.5f;
+    const float ez = (bounds.max.z - bounds.min.z) * 0.5f;
+    const float half = (std::max)({ex, ey, ez}) + pad;
+
+    Aabb cubic{};
+    cubic.min = XMFLOAT3{cx - half, cy - half, cz - half};
+    cubic.max = XMFLOAT3{cx + half, cy + half, cz + half};
+    return cubic;
+}
+
+XMFLOAT3 AabbCenterPoint(const Aabb& box)
+{
+    return XMFLOAT3{
+        (box.min.x + box.max.x) * 0.5f,
+        (box.min.y + box.max.y) * 0.5f,
+        (box.min.z + box.max.z) * 0.5f};
+}
+
+int ChildIndexForPoint(const Aabb& nodeBounds, const XMFLOAT3& point)
+{
+    const XMFLOAT3 mid = AabbCenterPoint(nodeBounds);
+    int idx = 0;
+    if (point.x >= mid.x)
+        idx |= 1;
+    if (point.y >= mid.y)
+        idx |= 2;
+    if (point.z >= mid.z)
+        idx |= 4;
+    return idx;
 }
 
 } // namespace
@@ -168,11 +188,6 @@ bool IsWithinDrawDistance(const XMFLOAT3& camera, const Aabb& box, float maxDraw
     const float dz = camera.z - cz;
     const float maxSq = maxDrawDistance * maxDrawDistance;
     return dx * dx + dy * dy + dz * dz <= maxSq;
-}
-bool AabbIntersects(const Aabb& a, const Aabb& b)
-{
-    return a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y &&
-        a.min.z <= b.max.z && a.max.z >= b.min.z;
 }
 
 void Frustum::FromViewAndProjection(const XMMATRIX& view, const XMMATRIX& projection)
@@ -343,17 +358,22 @@ void ScatterCubesAndSpheres(
         SceneObject obj{};
         obj.kind = kind;
         obj.position = RandPointInBox(rng, spawnRegion);
+        obj.basePosition = obj.position;
         obj.uniformScale = std::lerp(0.35f, 1.15f, Rand01(rng));
         obj.color = XMFLOAT4(
             std::lerp(0.25f, 1.0f, Rand01(rng)),
             std::lerp(0.25f, 1.0f, Rand01(rng)),
             std::lerp(0.25f, 1.0f, Rand01(rng)),
             1.0f);
+        if (kind == PrimitiveKind::Cube)
+        {
+            obj.animPhase = Rand01(rng) * XM_2PI;
+            obj.animAmplitude = std::lerp(0.25f, 0.95f, Rand01(rng));
+            obj.animSpeed = std::lerp(0.75f, 1.45f, Rand01(rng));
+            obj.animUpdateBucket = rng() & 63u;
+        }
         obj.localBounds = kind == PrimitiveKind::Cube ? cubeProbe.localBounds : sphereProbe.localBounds;
-
-        const XMMATRIX world = XMMatrixScaling(obj.uniformScale, obj.uniformScale, obj.uniformScale) *
-            XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
-        obj.worldBounds = TransformAabb(obj.localBounds, world);
+        RefreshSceneObjectWorldBounds(obj);
         objects.push_back(obj);
     };
 
@@ -363,22 +383,97 @@ void ScatterCubesAndSpheres(
         spawnOne(PrimitiveKind::Sphere);
 }
 
-bool Octree::Node::IsLeaf() const
+void RefreshSceneObjectWorldBounds(SceneObject& obj)
+{
+    const XMMATRIX world = XMMatrixScaling(obj.uniformScale, obj.uniformScale, obj.uniformScale) *
+        XMMatrixTranslation(obj.position.x, obj.position.y, obj.position.z);
+    obj.worldBounds = TransformAabb(obj.localBounds, world);
+}
+
+uint32_t CubeAnimUpdateDivisor(float distanceToCamera)
+{
+    if (distanceToCamera < 12.0f)
+        return 1;
+    if (distanceToCamera < 24.0f)
+        return 2;
+    if (distanceToCamera < 40.0f)
+        return 4;
+    if (distanceToCamera < 60.0f)
+        return 8;
+    return 16;
+}
+
+void UpdateCubeSinMotion(
+    std::vector<SceneObject>& objects,
+    const XMFLOAT3& cameraPos,
+    float timeSec,
+    uint32_t frameIndex)
+{
+    for (SceneObject& obj : objects)
+    {
+        if (obj.kind != PrimitiveKind::Cube)
+            continue;
+
+        const float dx = obj.basePosition.x - cameraPos.x;
+        const float dy = obj.basePosition.y - cameraPos.y;
+        const float dz = obj.basePosition.z - cameraPos.z;
+        const float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        const uint32_t updateDivisor = CubeAnimUpdateDivisor(dist);
+        if ((frameIndex + obj.animUpdateBucket) % updateDivisor != 0)
+            continue;
+
+        const float yOffset = sinf(timeSec * obj.animSpeed + obj.animPhase) * obj.animAmplitude;
+        obj.position.y = obj.basePosition.y + yOffset;
+        RefreshSceneObjectWorldBounds(obj);
+    }
+}
+
+bool Octree::Node::HasChildren() const
 {
     for (const auto& child : children)
     {
         if (child)
-            return false;
+            return true;
     }
-    return true;
+    return false;
 }
 
-void Octree::Build(const std::vector<SceneObject>& objects, const Aabb& sceneBounds)
+Aabb Octree::ComputeRootBounds(
+    const std::vector<SceneObject>& objects,
+    const Aabb& fallback,
+    uint32_t objectCount)
 {
-    m_root = std::make_unique<Node>();
-    m_root->bounds = sceneBounds;
+    if (objects.empty() || objectCount == 0)
+        return fallback;
 
-    for (uint32_t i = 0; i < objects.size(); ++i)
+    Aabb bounds = objects.front().worldBounds;
+    for (uint32_t i = 1; i < objectCount; ++i)
+        bounds.Merge(objects[i].worldBounds);
+
+    return MakeCubicBounds(bounds, 0.5f);
+}
+
+void Octree::Build(const std::vector<SceneObject>& objects, const Aabb& sceneBounds, uint32_t objectCount)
+{
+    m_root.reset();
+    m_builtObjectCount = 0;
+    if (objects.empty())
+        return;
+
+    const uint32_t count = objectCount > 0
+        ? (std::min)(objectCount, static_cast<uint32_t>(objects.size()))
+        : static_cast<uint32_t>(objects.size());
+    if (count == 0)
+        return;
+
+    m_builtObjectCount = count;
+
+    Aabb buildBounds = ComputeRootBounds(objects, sceneBounds, count);
+
+    m_root = std::make_unique<Node>();
+    m_root->bounds = buildBounds;
+    m_root->objectIndices.reserve(count);
+    for (uint32_t i = 0; i < count; ++i)
         m_root->objectIndices.push_back(i);
 
     Subdivide(*m_root, objects, 0);
@@ -386,31 +481,24 @@ void Octree::Build(const std::vector<SceneObject>& objects, const Aabb& sceneBou
 
 void Octree::Subdivide(Node& node, const std::vector<SceneObject>& objects, uint32_t depth)
 {
-    if (depth >= kMaxDepth || node.objectIndices.size() <= kMaxObjectsPerLeaf)
+    if (depth >= kMaxDepth || node.objectIndices.size() <= kMaxObjectsPerLeaf || node.HasChildren())
         return;
 
     std::vector<uint32_t> buckets[8];
     for (uint32_t idx : node.objectIndices)
     {
-        const Aabb& wb = objects[idx].worldBounds;
-        for (int c = 0; c < 8; ++c)
-        {
-            const Aabb childBounds = ChildBounds(node.bounds, c);
-            if (AabbIntersects(wb, childBounds))
-                buckets[c].push_back(idx);
-        }
+        const XMFLOAT3 center = AabbCenterPoint(objects[idx].worldBounds);
+        buckets[ChildIndexForPoint(node.bounds, center)].push_back(idx);
     }
 
-    bool anySplit = false;
+    int usedChildren = 0;
     for (int c = 0; c < 8; ++c)
     {
         if (!buckets[c].empty())
-        {
-            anySplit = true;
-            break;
-        }
+            ++usedChildren;
     }
-    if (!anySplit)
+
+    if (usedChildren <= 1)
         return;
 
     node.objectIndices.clear();
@@ -432,14 +520,24 @@ void Octree::QueryVisible(
     const XMFLOAT3& cameraPos,
     float maxDrawDistance,
     bool useDistanceCull,
-    std::vector<uint32_t>& outIndices) const
+    bool useFrustumCull,
+    std::vector<uint32_t>& outIndices,
+    std::vector<Aabb>* debugVisitedNodes) const
 {
     outIndices.clear();
+    if (debugVisitedNodes)
+        debugVisitedNodes->clear();
     if (m_root)
-        QueryNode(*m_root, frustum, objects, cameraPos, maxDrawDistance, useDistanceCull, outIndices);
-
-    std::sort(outIndices.begin(), outIndices.end());
-    outIndices.erase(std::unique(outIndices.begin(), outIndices.end()), outIndices.end());
+        QueryNode(
+            *m_root,
+            frustum,
+            objects,
+            cameraPos,
+            maxDrawDistance,
+            useDistanceCull,
+            useFrustumCull,
+            outIndices,
+            debugVisitedNodes);
 }
 
 void Octree::QueryNode(
@@ -449,32 +547,42 @@ void Octree::QueryNode(
     const XMFLOAT3& cameraPos,
     float maxDrawDistance,
     bool useDistanceCull,
-    std::vector<uint32_t>& out) const
+    bool useFrustumCull,
+    std::vector<uint32_t>& out,
+    std::vector<Aabb>* debugVisitedNodes) const
 {
-    if (!frustum.IntersectsAabb(node.bounds))
+    if (useFrustumCull && !frustum.IntersectsAabb(node.bounds))
         return;
 
     if (useDistanceCull && !IsWithinDrawDistance(cameraPos, node.bounds, maxDrawDistance))
         return;
 
-    if (node.IsLeaf())
+    if (debugVisitedNodes)
+        debugVisitedNodes->push_back(node.bounds);
+
+    for (uint32_t idx : node.objectIndices)
     {
-        for (uint32_t idx : node.objectIndices)
-        {
-            const Aabb& wb = objects[idx].worldBounds;
-            if (!frustum.IntersectsAabb(wb))
-                continue;
-            if (useDistanceCull && !IsWithinDrawDistance(cameraPos, wb, maxDrawDistance))
-                continue;
-            out.push_back(idx);
-        }
-        return;
+        const Aabb& wb = objects[idx].worldBounds;
+        if (useFrustumCull && !frustum.IntersectsAabb(wb))
+            continue;
+        if (useDistanceCull && !IsWithinDrawDistance(cameraPos, wb, maxDrawDistance))
+            continue;
+        out.push_back(idx);
     }
 
     for (const auto& child : node.children)
     {
         if (child)
-            QueryNode(*child, frustum, objects, cameraPos, maxDrawDistance, useDistanceCull, out);
+            QueryNode(
+                *child,
+                frustum,
+                objects,
+                cameraPos,
+                maxDrawDistance,
+                useDistanceCull,
+                useFrustumCull,
+                out,
+                debugVisitedNodes);
     }
 }
 
@@ -487,10 +595,13 @@ void CollectVisibleObjects(
     const XMFLOAT3& cameraPos,
     float maxDrawDistance,
     bool useDistanceCull,
-    std::vector<uint32_t>& outVisible)
+    std::vector<uint32_t>& outVisible,
+    std::vector<Aabb>* debugOctreeVisitedNodes)
 {
     outVisible.clear();
     outVisible.reserve(objects.size());
+    if (debugOctreeVisitedNodes)
+        debugOctreeVisitedNodes->clear();
 
     auto passesCull = [&](uint32_t i) -> bool {
         const Aabb& wb = objects[i].worldBounds;
@@ -505,12 +616,39 @@ void CollectVisibleObjects(
     {
         for (uint32_t i = 0; i < objects.size(); ++i)
             outVisible.push_back(i);
+        if (debugOctreeVisitedNodes && !octree.Empty())
+        {
+            std::vector<uint32_t> dummy;
+            octree.QueryVisible(
+                frustum,
+                objects,
+                cameraPos,
+                maxDrawDistance,
+                false,
+                false,
+                dummy,
+                debugOctreeVisitedNodes);
+        }
         return;
     }
 
     if (useFrustumCulling && useOctree && !octree.Empty())
     {
-        octree.QueryVisible(frustum, objects, cameraPos, maxDrawDistance, useDistanceCull, outVisible);
+        octree.QueryVisible(
+            frustum,
+            objects,
+            cameraPos,
+            maxDrawDistance,
+            useDistanceCull,
+            useFrustumCulling,
+            outVisible,
+            debugOctreeVisitedNodes);
+
+        for (uint32_t i = octree.BuiltObjectCount(); i < static_cast<uint32_t>(objects.size()); ++i)
+        {
+            if (passesCull(i))
+                outVisible.push_back(i);
+        }
         return;
     }
 
@@ -518,6 +656,20 @@ void CollectVisibleObjects(
     {
         if (passesCull(i))
             outVisible.push_back(i);
+    }
+
+    if (debugOctreeVisitedNodes && !octree.Empty())
+    {
+        std::vector<uint32_t> dummy;
+        octree.QueryVisible(
+            frustum,
+            objects,
+            cameraPos,
+            maxDrawDistance,
+            useDistanceCull,
+            useFrustumCulling,
+            dummy,
+            debugOctreeVisitedNodes);
     }
 }
 

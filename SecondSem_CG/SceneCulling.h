@@ -41,8 +41,13 @@ enum class PrimitiveKind : uint8_t
 struct SceneObject
 {
     DirectX::XMFLOAT3 position{};
+    DirectX::XMFLOAT3 basePosition{};
     float uniformScale = 1.0f;
     DirectX::XMFLOAT4 color{1, 1, 1, 1};
+    float animPhase = 0.0f;
+    float animAmplitude = 0.5f;
+    float animSpeed = 1.0f;
+    uint32_t animUpdateBucket = 0;
     PrimitiveKind kind = PrimitiveKind::Cube;
     Aabb localBounds{};
     Aabb worldBounds{};
@@ -61,25 +66,34 @@ public:
     static constexpr uint32_t kMaxObjectsPerLeaf = 8;
     static constexpr uint32_t kMaxDepth = 8;
 
-    void Build(const std::vector<SceneObject>& objects, const Aabb& sceneBounds);
+    void Build(const std::vector<SceneObject>& objects, const Aabb& sceneBounds, uint32_t objectCount = 0);
     void QueryVisible(
         const Frustum& frustum,
         const std::vector<SceneObject>& objects,
         const DirectX::XMFLOAT3& cameraPos,
         float maxDrawDistance,
         bool useDistanceCull,
-        std::vector<uint32_t>& outIndices) const;
+        bool useFrustumCull,
+        std::vector<uint32_t>& outIndices,
+        std::vector<Aabb>* debugVisitedNodes = nullptr) const;
     bool Empty() const { return !m_root; }
+    uint32_t BuiltObjectCount() const { return m_builtObjectCount; }
 
 private:
     struct Node
     {
         Aabb bounds{};
+        // Объекты, которые не помещаются целиком в один дочерний octant (или лист переполнен).
         std::vector<uint32_t> objectIndices;
         std::unique_ptr<Node> children[8]{};
-        bool IsLeaf() const;
+
+        bool HasChildren() const;
     };
 
+    static Aabb ComputeRootBounds(
+        const std::vector<SceneObject>& objects,
+        const Aabb& fallback,
+        uint32_t objectCount);
     void Subdivide(Node& node, const std::vector<SceneObject>& objects, uint32_t depth);
     void QueryNode(
         const Node& node,
@@ -88,9 +102,19 @@ private:
         const DirectX::XMFLOAT3& cameraPos,
         float maxDrawDistance,
         bool useDistanceCull,
-        std::vector<uint32_t>& out) const;
+        bool useFrustumCull,
+        std::vector<uint32_t>& out,
+        std::vector<Aabb>* debugVisitedNodes) const;
 
     std::unique_ptr<Node> m_root;
+    uint32_t m_builtObjectCount = 0;
+};
+
+// GPU: min.xyz + max.xyz на узел octree (для debug-draw)
+struct OctreeNodeGpu
+{
+    DirectX::XMFLOAT4 minW{};
+    DirectX::XMFLOAT4 maxW{};
 };
 
 Aabb TransformAabb(const Aabb& local, const DirectX::XMMATRIX& world);
@@ -102,6 +126,13 @@ void ScatterCubesAndSpheres(
     uint32_t sphereCount,
     const Aabb& spawnRegion,
     uint32_t randomSeed);
+void RefreshSceneObjectWorldBounds(SceneObject& obj);
+uint32_t CubeAnimUpdateDivisor(float distanceToCamera);
+void UpdateCubeSinMotion(
+    std::vector<SceneObject>& objects,
+    const DirectX::XMFLOAT3& cameraPos,
+    float timeSec,
+    uint32_t frameIndex);
 void CollectVisibleObjects(
     const std::vector<SceneObject>& objects,
     const Frustum& frustum,
@@ -111,7 +142,8 @@ void CollectVisibleObjects(
     const DirectX::XMFLOAT3& cameraPos,
     float maxDrawDistance,
     bool useDistanceCull,
-    std::vector<uint32_t>& outVisible);
+    std::vector<uint32_t>& outVisible,
+    std::vector<Aabb>* debugOctreeVisitedNodes = nullptr);
 
 // Ближайшая точка AABB к камере; если она дальше maxDrawDistance — объект не рисуем.
 bool IsWithinDrawDistance(const DirectX::XMFLOAT3& camera, const Aabb& box, float maxDrawDistance);

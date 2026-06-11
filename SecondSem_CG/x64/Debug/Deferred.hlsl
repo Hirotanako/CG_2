@@ -73,6 +73,18 @@ bool IsFrameDebug()
     return DebugView.x > 0.5f;
 }
 
+bool UsesTextureAlbedo()
+{
+    return MatFlags.w > 0.5f || MatFlags2.x > 0.5f;
+}
+
+float3 SampleMaterialAlbedo(float2 uv)
+{
+    if (IsFrameDebug() || !UsesTextureAlbedo())
+        return saturate(Kd.rgb);
+    return Albedo.Sample(Samp, uv).rgb * Kd.rgb;
+}
+
 float SampleDisplacement(float2 uv)
 {
     if (IsFrameDebug() || MatFlags2.x < 0.5f)
@@ -205,7 +217,7 @@ GeoRtOut GeometryPS(DSOut input)
     }
 
     float2 muv = MaterialUv(input.uv, TimeCamPos.x);
-    float3 a = Albedo.Sample(Samp, muv).rgb * Kd.rgb;
+    float3 a = SampleMaterialAlbedo(muv);
     N = ApplyNormalMap(input.nrmW, input.tanW, muv);
 
     o.normalPacked = PackNormalKillzone(N);
@@ -283,74 +295,8 @@ float3 ReconstructWorldPos(float2 uv, float depth)
 // RT0: RGB = lighting, A = intensity (Killzone layout)
 float4 LightingPS(FsOut pin) : SV_Target0
 {
-    float depth = GDepth.Sample(GSamp, pin.uv).r;
-    float4 nPack = GNormalPacked.Sample(GSamp, pin.uv);
-    float4 ms = GMotionSpec.Sample(GSamp, pin.uv);
     float4 diffOcc = GDiffuseOcc.Sample(GSamp, pin.uv);
-
-    float3 alb = diffOcc.rgb;
-    float sunOcc = diffOcc.a;
-    float3 N = UnpackNormalKillzone(nPack);
-    float3 P = ReconstructWorldPos(pin.uv, depth);
-
-    if (LightCount == 0)
-        return float4(alb * sunOcc, 1.0f);
-
-    float3 color = alb * sunOcc * 0.035f;
-    if (dot(N, N) < 1e-6f)
-        return float4(color, 1.0f);
-
-    float3 V = normalize(CameraPos_pad.xyz - P);
-    float specPower = lerp(4.0f, 128.0f, ms.b);
-    float specMul = ms.a;
-
-    for (uint i = 0; i < LightCount; ++i)
-    {
-        GpuLight Lg = Lights[i];
-        float3 Lc = Lg.color_intensity.xyz;
-        float I = Lg.color_intensity.w;
-        float3 Ldir = float3(0, 0, 0);
-        float att = 1.f;
-
-        if (Lg.type == LIGHT_DIR)
-        {
-            Ldir = normalize(-Lg.direction_cosOuter.xyz);
-        }
-        else if (Lg.type == LIGHT_POINT)
-        {
-            float3 toL = Lg.position_range.xyz - P;
-            float dist = length(toL);
-            if (dist > Lg.position_range.w)
-                continue;
-            Ldir = toL / max(dist, 1e-5);
-            float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
-        }
-        else
-        {
-            float3 toL = Lg.position_range.xyz - P;
-            float dist = length(toL);
-            if (dist > Lg.position_range.w)
-                continue;
-            Ldir = toL / max(dist, 1e-5);
-            float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
-            float3 axis = normalize(Lg.direction_cosOuter.xyz);
-            float rho = dot(-Ldir, axis);
-            float cosO = Lg.direction_cosOuter.w;
-            float cosI = Lg.spotCosInner;
-            float spot = saturate((rho - cosO) / max(cosI - cosO, 1e-4));
-            att *= spot * spot;
-        }
-
-        float diff = saturate(dot(N, Ldir));
-        float3 H = normalize(Ldir + V);
-        float spec = pow(saturate(dot(N, H)), specPower) * 0.28f * specMul;
-        color += (alb * diff + spec) * Lc * I * att;
-    }
-
-    float intensity = saturate(max(color.r, max(color.g, color.b)));
-    return float4(color, intensity);
+    return float4(diffOcc.rgb, 1.0f);
 }
 
 Texture2D GLightAccum : register(t0);

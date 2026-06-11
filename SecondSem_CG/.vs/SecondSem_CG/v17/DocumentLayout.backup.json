@@ -36,10 +36,9 @@
               "RelativeDocumentMoniker": "SecondSem_CG.cpp",
               "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SecondSem_CG.cpp",
               "RelativeToolTip": "SecondSem_CG.cpp",
-              "ViewState": "AgIAAHgDAAAAAAAAAIAwwIkDAAAOAAAAAAAAAA==",
+              "ViewState": "AgIAABcAAAAAAAAAAAAYwGcAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
-              "WhenOpened": "2026-05-30T11:40:42.035Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-30T11:40:42.035Z"
             },
             {
               "$type": "Document",
@@ -49,7 +48,7 @@
               "RelativeDocumentMoniker": "SceneCulling.cpp",
               "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\SceneCulling.cpp",
               "RelativeToolTip": "SceneCulling.cpp",
-              "ViewState": "AgIAAF0AAAAAAAAAAIAwwF8AAAAEAAAAAAAAAA==",
+              "ViewState": "AgIAAHsAAAAAAAAAAAAAAAwAAAAJAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-05-30T07:51:00.491Z",
               "EditorCaption": ""
@@ -72,12 +71,11 @@
               "Title": "Deferred.hlsl",
               "DocumentMoniker": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl",
               "RelativeDocumentMoniker": "Deferred.hlsl",
-              "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl",
-              "RelativeToolTip": "Deferred.hlsl",
-              "ViewState": "AgIAAAIBAAAAAAAAAAAAAPwAAAAMAAAAAAAAAA==",
+              "ToolTip": "C:\\Users\\\u0424\u0451\u0434\u043E\u0440\\source\\repos\\CG_SECOND_COURSE\\CG_2\\SecondSem_CG\\Deferred.hlsl*",
+              "RelativeToolTip": "Deferred.hlsl*",
+              "ViewState": "AgIAAJwAAAAAAAAAAAAAALUAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-05-23T09:13:31.149Z",
-              "EditorCaption": ""
+              "WhenOpened": "2026-05-23T09:13:31.149Z"
             }
           ]
         }

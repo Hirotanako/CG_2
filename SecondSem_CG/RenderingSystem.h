@@ -33,6 +33,7 @@ public:
     void UploadFrameConstants(
         const DirectX::XMFLOAT3& cameraPos,
         const DirectX::XMFLOAT3& cameraForward,
+        const DirectX::XMFLOAT4X4& invViewProj,
         UINT screenW,
         UINT screenH);
 
