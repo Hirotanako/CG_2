@@ -2,6 +2,7 @@
   SecondSem_CG.cpp
   TextureUtil.cpp
   GBuffer.cpp
+  RainLightSystem.cpp
   RenderingSystem.cpp
   Создание кода...
   SecondSem_CG.vcxproj -> C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.exe

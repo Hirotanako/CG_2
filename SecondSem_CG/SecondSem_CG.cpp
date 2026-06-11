@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include "ObjLoader.h"
+#include "RainLightSystem.h"
 #include "RenderingSystem.h"
 #include "TextureUtil.h"
 
@@ -42,6 +43,7 @@ constexpr UINT kClientW = 1280;
 constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
 constexpr UINT kDeferredSrvBase = 400;
+constexpr UINT kRainLightsSrvSlot = kDeferredSrvBase + 3;
 constexpr UINT kCbAlign = 256;
 
 struct alignas(256) FrameCB
@@ -101,6 +103,7 @@ ComPtr<ID3D12PipelineState> g_pipelineGeoWire;
 bool g_debugFrameView = false;
 
 RenderingSystem g_renderSys;
+RainLightSystem g_rainLights;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -483,10 +486,10 @@ static std::filesystem::path FindSceneObj()
         return {};
     };
 
-    std::filesystem::path p = tryRels(cliffRels, _countof(cliffRels));
+    std::filesystem::path p = tryRels(sponzaRels, _countof(sponzaRels));
     if (!p.empty())
         return p;
-    return tryRels(sponzaRels, _countof(sponzaRels));
+    return tryRels(cliffRels, _countof(cliffRels));
 }
 
 static std::filesystem::path ResolveNormalPath(
@@ -528,39 +531,99 @@ static std::filesystem::path ResolveDisplacementPath(
     return {};
 }
 
+XMMATRIX MeshWorldTransform()
+{
+    return g_sceneIsCliffRock
+        ? XMMatrixIdentity()
+        : XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+}
+
+bool ComputeMeshWorldBounds(XMFLOAT3& outMin, XMFLOAT3& outMax)
+{
+    if (g_mesh.vertices.empty())
+        return false;
+
+    const XMMATRIX worldXform = MeshWorldTransform();
+    XMFLOAT3 wmin{FLT_MAX, FLT_MAX, FLT_MAX};
+    XMFLOAT3 wmax{-FLT_MAX, -FLT_MAX, -FLT_MAX};
+    for (const Obj::MeshVertex& v : g_mesh.vertices)
+    {
+        const XMVECTOR wp = XMVector3TransformCoord(XMVectorSet(v.px, v.py, v.pz, 1.0f), worldXform);
+        XMFLOAT3 p{};
+        XMStoreFloat3(&p, wp);
+        wmin.x = (std::min)(wmin.x, p.x);
+        wmin.y = (std::min)(wmin.y, p.y);
+        wmin.z = (std::min)(wmin.z, p.z);
+        wmax.x = (std::max)(wmax.x, p.x);
+        wmax.y = (std::max)(wmax.y, p.y);
+        wmax.z = (std::max)(wmax.z, p.z);
+    }
+
+    outMin = wmin;
+    outMax = wmax;
+    return true;
+}
+
+void ConfigureRainInsideMesh()
+{
+    if (g_sceneIsCliffRock)
+        return;
+
+    XMFLOAT3 wmin{}, wmax{};
+    if (!ComputeMeshWorldBounds(wmin, wmax))
+        return;
+
+    const float spanX = wmax.x - wmin.x;
+    const float spanY = wmax.y - wmin.y;
+    const float spanZ = wmax.z - wmin.z;
+    const float insetX = spanX * 0.10f;
+    const float insetZ = spanZ * 0.10f;
+    const float floorY = wmin.y + 0.12f;
+    const float ceilingY = wmin.y + spanY * 0.62f;
+
+    const XMFLOAT3 spawnMin{wmin.x + insetX, floorY, wmin.z + insetZ};
+    const XMFLOAT3 spawnMax{wmax.x - insetX, ceilingY, wmax.z - insetZ};
+    g_rainLights.ConfigureInterior(spawnMin, spawnMax, floorY, ceilingY, true);
+}
+
 void FitCameraToMesh()
 {
     if (g_mesh.vertices.empty())
         return;
 
-    XMFLOAT3 bmin{FLT_MAX, FLT_MAX, FLT_MAX};
-    XMFLOAT3 bmax{-FLT_MAX, -FLT_MAX, -FLT_MAX};
-    for (const Obj::MeshVertex& v : g_mesh.vertices)
-    {
-        bmin.x = (std::min)(bmin.x, v.px);
-        bmin.y = (std::min)(bmin.y, v.py);
-        bmin.z = (std::min)(bmin.z, v.pz);
-        bmax.x = (std::max)(bmax.x, v.px);
-        bmax.y = (std::max)(bmax.y, v.py);
-        bmax.z = (std::max)(bmax.z, v.pz);
-    }
+    XMFLOAT3 wmin{}, wmax{};
+    if (!ComputeMeshWorldBounds(wmin, wmax))
+        return;
 
-    const float meshScale = g_sceneIsCliffRock ? 1.0f : 0.01f;
-    const XMVECTOR mn = XMVectorScale(XMLoadFloat3(&bmin), meshScale);
-    const XMVECTOR mx = XMVectorScale(XMLoadFloat3(&bmax), meshScale);
+    const XMVECTOR mn = XMLoadFloat3(&wmin);
+    const XMVECTOR mx = XMLoadFloat3(&wmax);
     const XMVECTOR center = XMVectorScale(XMVectorAdd(mn, mx), 0.5f);
     const XMVECTOR ext = XMVectorSubtract(mx, mn);
     float radius = XMVectorGetX(XMVector3Length(ext)) * 0.5f;
     radius = (std::max)(radius, 0.05f);
 
-    const XMVECTOR eye = XMVectorAdd(center, XMVectorSet(radius * 0.15f, radius * 0.45f, radius * 2.2f, 0.0f));
-    XMStoreFloat3(&g_camPos, eye);
+    if (g_sceneIsCliffRock)
+    {
+        const XMVECTOR eye = XMVectorAdd(center, XMVectorSet(radius * 0.15f, radius * 0.45f, radius * 2.2f, 0.0f));
+        XMStoreFloat3(&g_camPos, eye);
+        const XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(center, eye));
+        g_camPitch = asinf(XMVectorGetY(dir));
+        g_camYaw = atan2f(XMVectorGetX(dir), XMVectorGetZ(dir));
+    }
+    else
+    {
+        constexpr float kEyeHeight = 1.65f;
+        const XMVECTOR eye = XMVectorSet(
+            XMVectorGetX(center),
+            XMVectorGetY(mn) + kEyeHeight,
+            XMVectorGetZ(center),
+            0.0f);
+        XMStoreFloat3(&g_camPos, eye);
+        g_camYaw = 0.0f;
+        g_camPitch = -0.05f;
+    }
 
-    const XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(center, eye));
-    g_camPitch = asinf(XMVectorGetY(dir));
-    g_camYaw = atan2f(XMVectorGetX(dir), XMVectorGetZ(dir));
     g_camPitch = std::clamp(g_camPitch, -XM_PIDIV2 + 0.02f, XM_PIDIV2 - 0.02f);
-
     g_tessFarDist = (std::max)(radius * 2.5f, 4.0f);
 }
 
@@ -793,6 +856,7 @@ bool LoadScene()
     }
 
     FitCameraToMesh();
+    ConfigureRainInsideMesh();
 
     g_sceneReady = true;
     return true;
@@ -909,9 +973,7 @@ void DrawScene(const XMMATRIX& viewProj)
     g_cmdList->SetPipelineState(
         (g_debugFrameView ? g_pipelineGeoWire : g_pipelineGeo).Get());
 
-    const XMMATRIX world = g_sceneIsCliffRock
-        ? XMMatrixIdentity()
-        : XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+    const XMMATRIX world = MeshWorldTransform();
     WriteFrameCB(world, viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
 
@@ -949,6 +1011,12 @@ void DrawFrame(float dt)
 
     UpdateCamera(dt);
     g_appTime += dt;
+    g_rainLights.Update(dt);
+    g_rainLights.Upload();
+    g_renderSys.SetRainLightCount(g_rainLights.GetGpuLightCount());
+    XMFLOAT3 camForward{};
+    XMStoreFloat3(&camForward, CameraForwardVector());
+    g_renderSys.UploadFrameConstants(g_camPos, camForward, g_width, g_height);
     const XMMATRIX viewProj = CalcViewProj();
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
@@ -985,9 +1053,6 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    XMFLOAT3 camForward{};
-    XMStoreFloat3(&camForward, CameraForwardVector());
-    g_renderSys.UploadFrameConstants(g_camPos, camForward, g_width, g_height);
     g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
@@ -1087,6 +1152,7 @@ void InitD3D(HWND hwnd)
         kDeferredSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
+    g_rainLights.Init(g_device.Get(), g_srvHeap.Get(), kRainLightsSrvSlot, g_srvDescriptorSize);
     LoadScene();
 }
 
@@ -1143,7 +1209,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
     g_hwnd = CreateWindowExW(
-        0, wc.lpszClassName, L"SecondSem CG — Sponza: текстуры, MTL, тайлинг, UV-анимация", WS_OVERLAPPEDWINDOW,
+        0, wc.lpszClassName, L"SecondSem CG — Sponza + дождь point lights", WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, CW_USEDEFAULT, windowRect.right - windowRect.left, windowRect.bottom - windowRect.top,
         nullptr, nullptr, wc.hInstance, nullptr);
     if (!g_hwnd)

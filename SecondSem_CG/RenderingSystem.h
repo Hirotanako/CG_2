@@ -36,6 +36,9 @@ public:
         UINT screenW,
         UINT screenH);
 
+    void SetRainLightCount(UINT rainLightCount);
+    D3D12_GPU_VIRTUAL_ADDRESS LightingConstantBufferAddress() const;
+
     void DrawLightingPass(
         ID3D12GraphicsCommandList* cmd,
         ID3D12DescriptorHeap* srvHeapShaderVisible,
@@ -58,4 +61,5 @@ private:
 
     UINT m_gbufferSrvBase = 0;
     UINT m_srvDescriptorIncrement = 0;
+    UINT m_rainLightCount = 0;
 };

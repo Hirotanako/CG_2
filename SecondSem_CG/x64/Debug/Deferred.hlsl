@@ -1,13 +1,13 @@
-// Geometry: tessellation + displacement + normal map → G-buffer. Lighting pass ниже.
+// Geometry → G-buffer (альбедо, нормаль, позиция). Освещение — fullscreen deferred pass.
 
 cbuffer FrameCB : register(b0)
 {
     row_major float4x4 World;
     row_major float4x4 ViewProj;
-    float4 TimeCamPos;     // x=time, yzw=camera world pos
+    float4 TimeCamPos;
     float4 UvAnimAndPad;
-    float4 TessParams;     // x=maxFactor, y=minDist, z=maxDist
-    float4 DebugView;      // x=1 — каркас (wireframe), без текстур
+    float4 TessParams;
+    float4 DebugView;
     float _PadRest[16];
 };
 
@@ -16,8 +16,8 @@ cbuffer MatCB : register(b1)
     float4 Kd;
     float2 UvScale;
     float2 UvOffset;
-    float4 MatFlags;       // x=dispScale, y=normalStrength, z=useUvAnim, w=hasNormalMap
-    float4 MatFlags2;      // x=hasDispMap, y=invert (roughness как height)
+    float4 MatFlags;
+    float4 MatFlags2;
     float _PadMat[48];
 };
 
@@ -78,17 +78,6 @@ float SampleDisplacement(float2 uv)
     if (MatFlags2.y > 0.5f)
         h = 1.0f - h;
     return h;
-}
-
-// Бегущая волна по поверхности: фаза зависит от проекции posW на направление и от времени.
-float TravelingWave(float3 posW, float time)
-{
-    const float3 waveDir = normalize(float3(1.0, 0.15, 0.35));
-    const float wavelength = 1.8;
-    const float speed = 2.2;
-    const float amplitude = 0.07;
-    float phase = dot(posW, waveDir) * (6.2831853 / wavelength) - time * speed;
-    return sin(phase) * amplitude;
 }
 
 float3 ApplyNormalMap(float3 nrmW, float4 tanW, float2 uv)
@@ -167,8 +156,7 @@ DSOut DSMain(HSConstantOutput tess, const OutputPatch<HSControlPoint, 3> patch, 
     float2 muv = MaterialUv(uv, TimeCamPos.x);
     float h = SampleDisplacement(muv);
     float disp = (h - 0.5f) * 2.0f * MatFlags.x;
-    float wave = TravelingWave(posW, TimeCamPos.x);
-    posW += nrmW * (disp + wave);
+    posW += nrmW * disp;
 
     o.posW = posW;
     o.nrmW = nrmW;
@@ -201,32 +189,24 @@ GeoRtOut GeometryPS(DSOut input)
     float2 muv = MaterialUv(input.uv, TimeCamPos.x);
     float3 a = Albedo.Sample(Samp, muv).rgb * Kd.rgb;
     N = ApplyNormalMap(input.nrmW, input.tanW, muv);
+
     o.albedo = float4(a, 1);
     o.normal = float4(N, 0);
     o.position = float4(input.posW, 1);
     return o;
 }
 
-// --- Lighting pass ---
+// --- Deferred lighting: один раз на пиксель экрана ---
 
 Texture2D GAlbedo : register(t0);
 Texture2D GNormal : register(t1);
 Texture2D GPos : register(t2);
 SamplerState GSamp : register(s0);
 
-#define LIGHT_DIR 0
-#define LIGHT_POINT 1
-#define LIGHT_SPOT 2
-#define MAX_LIGHTS 8
-
-struct GpuLight
+struct RainPointLight
 {
-    float4 position_range;
-    float4 direction_cosOuter;
-    float4 color_intensity;
-    uint type;
-    float spotCosInner;
-    uint2 pad;
+    float4 posRange;
+    float4 colorIntensity;
 };
 
 cbuffer LightingCB : register(b0)
@@ -234,9 +214,11 @@ cbuffer LightingCB : register(b0)
     float4 CameraPos_pad;
     float4 InvScreen_pad;
     uint LightCount;
-    uint3 padHdr;
-    GpuLight Lights[MAX_LIGHTS];
+    uint RainLightCount;
+    uint2 padHdr;
 };
+
+StructuredBuffer<RainPointLight> RainLights : register(t3);
 
 struct FsOut
 {
@@ -253,66 +235,52 @@ FsOut LightingFullscreenVS(uint vid : SV_VertexID)
     return o;
 }
 
+float3 EvalRainPointLight(float3 P, float3 N, float3 V, float3 alb, RainPointLight rl)
+{
+    float3 Lpos = rl.posRange.xyz;
+    float Lrange = rl.posRange.w;
+    float3 Lc = rl.colorIntensity.xyz;
+    float I = rl.colorIntensity.w;
+    if (I <= 1e-4f)
+        return float3(0, 0, 0);
+
+    float3 toL = Lpos - P;
+    float distSq = dot(toL, toL);
+    float rangeSq = Lrange * Lrange;
+    if (distSq > rangeSq)
+        return float3(0, 0, 0);
+
+    float invDist = rsqrt(distSq);
+    float dist = distSq * invDist;
+    float3 Ldir = toL * invDist;
+
+    float t = 1.f - saturate(dist / Lrange);
+    float att = t * t;
+    float diff = saturate(dot(N, Ldir));
+    float3 H = normalize(Ldir + V);
+    float spec = pow(saturate(dot(N, H)), 48.f) * 0.28f;
+    return (alb * diff + spec) * Lc * I * att;
+}
+
 float4 LightingPS(FsOut pin) : SV_Target0
 {
     float3 alb = GAlbedo.Sample(GSamp, pin.uv).rgb;
     float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
     float3 P = GPos.Sample(GSamp, pin.uv).xyz;
 
-    if (LightCount == 0)
+    if (RainLightCount == 0)
         return float4(alb, 1.f);
 
-    float3 color = alb * 0.035f;
-
+    float3 color = alb * 0.03f;
     if (dot(N, N) < 1e-6f)
         return float4(color, 1.f);
 
     N = normalize(N);
     float3 V = normalize(CameraPos_pad.xyz - P);
 
-    for (uint i = 0; i < LightCount; ++i)
-    {
-        GpuLight Lg = Lights[i];
-        float3 Lc = Lg.color_intensity.xyz;
-        float I = Lg.color_intensity.w;
-        float3 Ldir = float3(0, 0, 0);
-        float att = 1.f;
+    [loop]
+    for (uint r = 0; r < RainLightCount; ++r)
+        color += EvalRainPointLight(P, N, V, alb, RainLights[r]);
 
-        if (Lg.type == LIGHT_DIR)
-        {
-            Ldir = normalize(-Lg.direction_cosOuter.xyz);
-        }
-        else if (Lg.type == LIGHT_POINT)
-        {
-            float3 toL = Lg.position_range.xyz - P;
-            float dist = length(toL);
-            if (dist > Lg.position_range.w)
-                continue;
-            Ldir = toL / max(dist, 1e-5);
-            float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
-        }
-        else
-        {
-            float3 toL = Lg.position_range.xyz - P;
-            float dist = length(toL);
-            if (dist > Lg.position_range.w)
-                continue;
-            Ldir = toL / max(dist, 1e-5);
-            float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
-            float3 axis = normalize(Lg.direction_cosOuter.xyz);
-            float rho = dot(-Ldir, axis);
-            float cosO = Lg.direction_cosOuter.w;
-            float cosI = Lg.spotCosInner;
-            float spot = saturate((rho - cosO) / max(cosI - cosO, 1e-4));
-            att *= spot * spot;
-        }
-
-        float diff = saturate(dot(N, Ldir));
-        float3 H = normalize(Ldir + V);
-        float spec = pow(saturate(dot(N, H)), 48.f) * 0.28f;
-        color += (alb * diff + spec) * Lc * I * att;
-    }
     return float4(color, 1.f);
 }

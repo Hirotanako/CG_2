@@ -43,7 +43,8 @@ struct LightingCBGPU
     XMFLOAT4 cameraPos_pad{};
     XMFLOAT4 invScreen_pad{};
     UINT lightCount = 0;
-    UINT padHdr[3]{};
+    UINT rainLightCount = 0;
+    UINT padHdr[2]{};
     LightGpu lights[8]{};
     float tailPad[52]{}; // до 768 байт (выравнивание CB D3D12)
 };
@@ -116,11 +117,16 @@ void RenderingSystem::WriteDefaultLights()
 
 void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t* hlslPath)
 {
-    D3D12_DESCRIPTOR_RANGE range{};
-    range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 3;
-    range.BaseShaderRegister = 0;
-    range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_DESCRIPTOR_RANGE ranges[2]{};
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[0].NumDescriptors = 3;
+    ranges[0].BaseShaderRegister = 0;
+    ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    ranges[1].NumDescriptors = 1;
+    ranges[1].BaseShaderRegister = 3;
+    ranges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
     D3D12_ROOT_PARAMETER params[2]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -128,8 +134,8 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    params[1].DescriptorTable.NumDescriptorRanges = 1;
-    params[1].DescriptorTable.pDescriptorRanges = &range;
+    params[1].DescriptorTable.NumDescriptorRanges = 2;
+    params[1].DescriptorTable.pDescriptorRanges = ranges;
     params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_STATIC_SAMPLER_DESC samp{};
@@ -234,8 +240,19 @@ void RenderingSystem::UploadFrameConstants(
     cb->invScreen_pad = XMFLOAT4(iw, ih, 0.f, 0.f);
 
     cb->lightCount = 0;
+    cb->rainLightCount = m_rainLightCount;
     (void)cameraPos;
     (void)cameraForward;
+}
+
+void RenderingSystem::SetRainLightCount(UINT rainLightCount)
+{
+    m_rainLightCount = rainLightCount;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS RenderingSystem::LightingConstantBufferAddress() const
+{
+    return m_lightingCB ? m_lightingCB->GetGPUVirtualAddress() : 0;
 }
 
 void RenderingSystem::DrawLightingPass(

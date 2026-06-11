@@ -168,6 +168,7 @@ if exist "$(ProjectDir)..\textures_" xcopy /E /I /Y "$(ProjectDir)..\textures_" 
     <ClCompile Include="SecondSem_CG.cpp" />
     <ClCompile Include="TextureUtil.cpp" />
     <ClCompile Include="GBuffer.cpp" />
+    <ClCompile Include="RainLightSystem.cpp" />
     <ClCompile Include="RenderingSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
