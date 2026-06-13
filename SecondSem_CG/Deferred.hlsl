@@ -1,4 +1,4 @@
-// Этап геометрии отложенного рендера (заполнение G-buffer) и полноэкранный проход света.
+// Этап геометрии отложенного рендера (G-buffer) + каскадные тени (CSM) + PCF.
 
 cbuffer FrameCB : register(b0)
 {
@@ -70,6 +70,17 @@ GeoVsOut GeometryVS(GeoVsIn input)
     return o;
 }
 
+GeoVsOut ShadowVS(GeoVsIn input)
+{
+    GeoVsOut o;
+    float4 wpos = mul(float4(input.pos, 1.0f), World);
+    o.clipPos = mul(wpos, ViewProj);
+    o.nrmW = float3(0, 0, 0);
+    o.posW = wpos.xyz;
+    o.uv = input.uv;
+    return o;
+}
+
 struct GeoRtOut
 {
     float4 albedo : SV_Target0;
@@ -96,12 +107,15 @@ GeoRtOut GeometryPS(GeoVsOut input)
 Texture2D GAlbedo : register(t0);
 Texture2D GNormal : register(t1);
 Texture2D GPos : register(t2);
+Texture2DArray ShadowMap : register(t3);
 SamplerState GSamp : register(s0);
+SamplerComparisonState ShadowSamp : register(s1);
 
 #define LIGHT_DIR 0
 #define LIGHT_POINT 1
 #define LIGHT_SPOT 2
 #define MAX_LIGHTS 8
+#define MAX_CASCADES 4
 
 struct GpuLight
 {
@@ -122,6 +136,14 @@ cbuffer LightingCB : register(b0)
     GpuLight Lights[MAX_LIGHTS];
 };
 
+cbuffer ShadowCB : register(b1)
+{
+    row_major float4x4 LightViewProj[MAX_CASCADES];
+    row_major float4x4 CameraView;
+    float4 CascadeSplits;
+    float4 ShadowParams;
+};
+
 struct FsOut
 {
     float4 pos : SV_POSITION;
@@ -137,13 +159,64 @@ FsOut LightingFullscreenVS(uint vid : SV_VertexID)
     return o;
 }
 
+uint SelectCascade(float viewDepth)
+{
+    if (viewDepth < CascadeSplits.x)
+        return 0;
+    if (viewDepth < CascadeSplits.y)
+        return 1;
+    if (viewDepth < CascadeSplits.z)
+        return 2;
+    return 3;
+}
+
+float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
+{
+    float3 samplePos = worldPos + N * ShadowParams.z;
+
+    float viewDepth = mul(float4(samplePos, 1.f), CameraView).z;
+    uint cascade = SelectCascade(viewDepth);
+
+    float4 clip = mul(float4(samplePos, 1.f), LightViewProj[cascade]);
+    float3 ndc = clip.xyz / clip.w;
+    if (ndc.x < -1.f || ndc.x > 1.f || ndc.y < -1.f || ndc.y > 1.f)
+        return 1.f;
+
+    float2 uv = ndc.xy * 0.5f + 0.5f;
+    uv.y = 1.f - uv.y;
+    float depth = ndc.z;
+
+    float ndotl = saturate(dot(N, Ldir));
+    float slope = sqrt(1.f - ndotl * ndotl) / max(ndotl, 0.08f);
+    float bias = ShadowParams.y + ShadowParams.w * slope;
+
+    float texel = ShadowParams.x;
+    float shadow = 0.f;
+
+    [unroll]
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        [unroll]
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            float2 offset = float2(dx, dy) * texel;
+            shadow += ShadowMap.SampleCmpLevelZero(
+                ShadowSamp,
+                float3(uv + offset, cascade),
+                depth + bias);
+        }
+    }
+    shadow /= 9.f;
+    return shadow * shadow;
+}
+
 float4 LightingPS(FsOut pin) : SV_Target0
 {
     float3 alb = GAlbedo.Sample(GSamp, pin.uv).rgb;
     float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
     float3 P = GPos.Sample(GSamp, pin.uv).xyz;
 
-    float3 color = alb * 0.055f;
+    float3 color = alb * 0.01f;
 
     if (dot(N, N) < 1e-6f)
         return float4(color, 1.f);
@@ -158,10 +231,12 @@ float4 LightingPS(FsOut pin) : SV_Target0
         float I = Lg.color_intensity.w;
         float3 Ldir = float3(0, 0, 0);
         float att = 1.f;
+        float shadow = 1.f;
 
         if (Lg.type == LIGHT_DIR)
         {
             Ldir = normalize(-Lg.direction_cosOuter.xyz);
+            shadow = SampleShadowPCF(P, N, Ldir);
         }
         else if (Lg.type == LIGHT_POINT)
         {
@@ -192,8 +267,8 @@ float4 LightingPS(FsOut pin) : SV_Target0
 
         float diff = saturate(dot(N, Ldir));
         float3 H = normalize(Ldir + V);
-        float spec = pow(saturate(dot(N, H)), 48.f) * 0.28f;
-        color += (alb * diff + spec) * Lc * I * att;
+        float spec = pow(saturate(dot(N, H)), 64.f) * 0.22f;
+        color += (alb * diff + spec) * Lc * I * att * shadow;
     }
     return float4(color, 1.f);
 }

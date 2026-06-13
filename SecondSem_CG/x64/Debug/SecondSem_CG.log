@@ -3,6 +3,7 @@
   TextureUtil.cpp
   GBuffer.cpp
   RenderingSystem.cpp
+  ShadowSystem.cpp
   Создание кода...
   SecondSem_CG.vcxproj -> C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.exe
   Скопировано файлов:         1.

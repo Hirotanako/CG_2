@@ -15,9 +15,11 @@
 
 #include "ObjLoader.h"
 #include "RenderingSystem.h"
+#include "ShadowSystem.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -42,6 +44,7 @@ constexpr UINT kClientW = 1280;
 constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
 constexpr UINT kDeferredSrvBase = 400;
+constexpr UINT kShadowSrvBase = 403;
 constexpr UINT kCbAlign = 256;
 
 struct alignas(256) FrameCB
@@ -100,6 +103,7 @@ ComPtr<ID3D12RootSignature> g_rootSignature;
 ComPtr<ID3D12PipelineState> g_pipelineGeo;
 
 RenderingSystem g_renderSys;
+ShadowSystem g_shadowSys;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -128,6 +132,9 @@ XMFLOAT3 g_camPos{0.0f, 1.4f, 4.5f};
 float g_camYaw = 0.0f;
 float g_camPitch = -0.12f;
 bool g_camPrevRmb = false;
+
+XMFLOAT3 g_sceneCenter{0.f, 2.f, 0.f};
+float g_sceneRadius = 25.f;
 
 LARGE_INTEGER g_qpcFreq{};
 LARGE_INTEGER g_qpcLast{};
@@ -473,6 +480,34 @@ static bool MaterialPathSuggestSway(const std::wstring& rel)
     return s.find(L"curtain") != std::wstring::npos;
 }
 
+XMMATRIX MeshWorldTransform()
+{
+    return XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+}
+
+void ComputeSceneBounds()
+{
+    if (g_mesh.vertices.empty())
+        return;
+
+    XMVECTOR bmin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0.f);
+    XMVECTOR bmax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0.f);
+    const XMMATRIX world = MeshWorldTransform();
+
+    for (const Obj::MeshVertex& v : g_mesh.vertices)
+    {
+        const XMFLOAT3 p{v.px, v.py, v.pz};
+        const XMVECTOR wp = XMVector3TransformCoord(XMLoadFloat3(&p), world);
+        bmin = XMVectorMin(bmin, wp);
+        bmax = XMVectorMax(bmax, wp);
+    }
+
+    const XMVECTOR center = XMVectorScale(XMVectorAdd(bmin, bmax), 0.5f);
+    const XMVECTOR extent = XMVectorSubtract(bmax, bmin);
+    XMStoreFloat3(&g_sceneCenter, center);
+    g_sceneRadius = XMVectorGetX(XMVector3Length(extent)) * 0.5f + 2.f;
+}
+
 bool LoadScene()
 {
     g_sceneReady = false;
@@ -655,6 +690,7 @@ bool LoadScene()
     }
 
     g_sceneReady = true;
+    ComputeSceneBounds();
     return true;
 }
 
@@ -670,16 +706,24 @@ void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec
     std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
 }
 
-XMMATRIX CalcViewProj()
+XMMATRIX CalcView()
 {
     const XMVECTOR eye = XMLoadFloat3(&g_camPos);
     const XMVECTOR dir = XMVector3Normalize(XMVectorSet(
         sinf(g_camYaw) * cosf(g_camPitch), sinf(g_camPitch), cosf(g_camYaw) * cosf(g_camPitch), 0.0f));
     const XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-    const XMMATRIX view = XMMatrixLookToLH(eye, dir, up);
+    return XMMatrixLookToLH(eye, dir, up);
+}
+
+XMMATRIX CalcProj()
+{
     const float aspect = static_cast<float>(g_width) / static_cast<float>((std::max)(1u, g_height));
-    const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.0f);
-    return view * proj;
+    return XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, ShadowSystem::kCameraNear, ShadowSystem::kCameraFar);
+}
+
+XMMATRIX CalcViewProj()
+{
+    return CalcView() * CalcProj();
 }
 
 void UpdateCamera(float dt)
@@ -761,8 +805,7 @@ void DrawScene(const XMMATRIX& viewProj)
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
     g_cmdList->SetPipelineState(g_pipelineGeo.Get());
 
-    const XMMATRIX world =
-        XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+    const XMMATRIX world = MeshWorldTransform();
     WriteFrameCB(world, viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
 
@@ -787,6 +830,23 @@ void DrawScene(const XMMATRIX& viewProj)
     }
 }
 
+void DrawSceneDepth(const XMMATRIX& lightViewProj)
+{
+    if (!g_sceneReady)
+        return;
+
+    const XMMATRIX world = MeshWorldTransform();
+    WriteFrameCB(world, lightViewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
+
+    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
+    g_cmdList->IASetIndexBuffer(&g_meshIbv);
+
+    for (const Obj::Submesh& sm : g_mesh.submeshes)
+        g_cmdList->DrawIndexedInstanced(sm.indexCount, 1, sm.indexStart, 0, 0);
+}
+
 void DrawFrame(float dt)
 {
     g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
@@ -800,10 +860,24 @@ void DrawFrame(float dt)
 
     UpdateCamera(dt);
     g_appTime += dt;
-    const XMMATRIX viewProj = CalcViewProj();
+
+    const XMMATRIX view = CalcView();
+    const XMMATRIX proj = CalcProj();
+    const XMMATRIX viewProj = view * proj;
+
+    g_shadowSys.UpdateCascades(
+        view, proj, g_camPos, g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipelineGeo.Get()));
+
+    ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
+    g_cmdList->SetDescriptorHeaps(1, heaps);
+
+    g_shadowSys.DrawShadowPass(g_cmdList.Get(), [](const XMMATRIX& lightViewProj) {
+        DrawSceneDepth(lightViewProj);
+    });
+    g_shadowSys.TransitionToShaderResource(g_cmdList.Get());
 
     GBuffer& gb = g_renderSys.GBufferTargets();
     gb.TransitionToRenderTargets(g_cmdList.Get());
@@ -833,7 +907,7 @@ void DrawFrame(float dt)
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
     g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
-    g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
+    g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -930,6 +1004,13 @@ void InitD3D(HWND hwnd)
         g_height,
         g_srvHeap.Get(),
         kDeferredSrvBase,
+        kShadowSrvBase,
+        g_srvDescriptorSize,
+        DeferredShaderPath().c_str());
+    g_shadowSys.Init(
+        g_device.Get(),
+        g_srvHeap.Get(),
+        kShadowSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
     LoadScene();

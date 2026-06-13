@@ -1,7 +1,6 @@
 #pragma once
 
-// RenderingSystem — высокоуровневая подсистема рендеринга для отложенного освещения:
-// оркеструет G-buffer (геопроход) и полноэкранный проход света по нескольким источникам.
+// RenderingSystem — G-buffer + полноэкранное освещение с каскадными тенями (CSM + PCF).
 
 #include <cstdint>
 
@@ -10,6 +9,8 @@
 #include <wrl/client.h>
 
 #include "GBuffer.h"
+
+class ShadowSystem;
 
 class RenderingSystem
 {
@@ -20,6 +21,7 @@ public:
         UINT height,
         ID3D12DescriptorHeap* shaderVisibleSrvHeap,
         UINT gbufferSrvStartIndex,
+        UINT shadowSrvStartIndex,
         UINT srvDescriptorIncrement,
         const wchar_t* deferredHlslPath);
 
@@ -38,11 +40,14 @@ public:
     void DrawLightingPass(
         ID3D12GraphicsCommandList* cmd,
         ID3D12DescriptorHeap* srvHeapShaderVisible,
+        ShadowSystem& shadows,
         D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv,
         UINT screenW,
         UINT screenH);
 
     GBuffer& GBufferTargets() { return m_gbuffer; }
+
+    DirectX::XMFLOAT3 SunDirection() const { return m_sunDirection; }
 
 private:
     void CreateLightingPipeline(ID3D12Device* device, const wchar_t* hlslPath);
@@ -56,5 +61,7 @@ private:
     uint8_t* m_lightingCBMapped = nullptr;
 
     UINT m_gbufferSrvBase = 0;
+    UINT m_shadowSrvBase = 0;
     UINT m_srvDescriptorIncrement = 0;
+    DirectX::XMFLOAT3 m_sunDirection{0.35f, 0.82f, 0.45f};
 };

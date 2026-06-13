@@ -157,6 +157,7 @@
     <ClCompile Include="TextureUtil.cpp" />
     <ClCompile Include="GBuffer.cpp" />
     <ClCompile Include="RenderingSystem.cpp" />
+    <ClCompile Include="ShadowSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders.hlsl" />
