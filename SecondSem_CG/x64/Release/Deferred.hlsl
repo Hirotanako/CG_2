@@ -1,0 +1,274 @@
+// Этап геометрии отложенного рендера (G-buffer) + каскадные тени (CSM) + PCF.
+
+cbuffer FrameCB : register(b0)
+{
+    row_major float4x4 World;
+    row_major float4x4 ViewProj;
+    float4 TimeCamPos;
+    float4 UvAnimAndPad;
+    float _PadRest[24];
+};
+
+cbuffer MatCB : register(b1)
+{
+    float4 Kd;
+    float2 UvScale;
+    float2 UvOffset;
+    float3 Ks;
+    float Ns;
+    uint UseUvAnim;
+    uint HasSpecularTex;
+    uint UseSwayAnim;
+    float _PadMat[49];
+};
+
+Texture2D Albedo : register(t0);
+Texture2D SpecMap : register(t1);
+SamplerState Samp : register(s0);
+
+struct GeoVsIn
+{
+    float3 pos : POSITION;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+};
+
+struct GeoVsOut
+{
+    float4 clipPos : SV_POSITION;
+    float3 nrmW : NORMAL;
+    float3 posW : POSITION0;
+    float2 uv : TEXCOORD0;
+};
+
+float3 ApplyCurtainSway(float3 posL)
+{
+    float t = TimeCamPos.x;
+    float hang = saturate(posL.y * 0.0065);
+    float phase = posL.x * 0.028 + posL.z * 0.022;
+    float s1 = sin(t * (1.05 * UvAnimAndPad.w) + phase);
+    float s2 = sin(t * 1.55 + phase * 1.35 + 1.7) * 0.42;
+    float sway = (s1 + s2) * UvAnimAndPad.z * hang;
+    posL.x += sway;
+    posL.z += sway * 0.28;
+    return posL;
+}
+
+GeoVsOut GeometryVS(GeoVsIn input)
+{
+    GeoVsOut o;
+    float3 posL = input.pos;
+    if (UseSwayAnim != 0)
+        posL = ApplyCurtainSway(posL);
+
+    float4 wpos = mul(float4(posL, 1.0f), World);
+    o.clipPos = mul(wpos, ViewProj);
+    float3x3 W = (float3x3)World;
+    o.nrmW = normalize(mul(input.normal, W));
+    o.posW = wpos.xyz;
+    o.uv = input.uv;
+    return o;
+}
+
+GeoVsOut ShadowVS(GeoVsIn input)
+{
+    GeoVsOut o;
+    float4 wpos = mul(float4(input.pos, 1.0f), World);
+    o.clipPos = mul(wpos, ViewProj);
+    o.nrmW = float3(0, 0, 0);
+    o.posW = wpos.xyz;
+    o.uv = input.uv;
+    return o;
+}
+
+struct GeoRtOut
+{
+    float4 albedo : SV_Target0;
+    float4 normal : SV_Target1;
+    float4 position : SV_Target2;
+};
+
+GeoRtOut GeometryPS(GeoVsOut input)
+{
+    GeoRtOut o;
+    float time = TimeCamPos.x;
+    float2 uv = input.uv * UvScale + UvOffset;
+    if (UseUvAnim != 0)
+        uv += UvAnimAndPad.xy * time;
+    float3 a = Albedo.Sample(Samp, uv).rgb * Kd.rgb;
+    o.albedo = float4(a, 1);
+    o.normal = float4(normalize(input.nrmW), 0);
+    o.position = float4(input.posW, 1);
+    return o;
+}
+
+// --- Lighting pass ---
+
+Texture2D GAlbedo : register(t0);
+Texture2D GNormal : register(t1);
+Texture2D GPos : register(t2);
+Texture2DArray ShadowMap : register(t3);
+SamplerState GSamp : register(s0);
+SamplerComparisonState ShadowSamp : register(s1);
+
+#define LIGHT_DIR 0
+#define LIGHT_POINT 1
+#define LIGHT_SPOT 2
+#define MAX_LIGHTS 8
+#define MAX_CASCADES 4
+
+struct GpuLight
+{
+    float4 position_range;
+    float4 direction_cosOuter;
+    float4 color_intensity;
+    uint type;
+    float spotCosInner;
+    uint2 pad;
+};
+
+cbuffer LightingCB : register(b0)
+{
+    float4 CameraPos_pad;
+    float4 InvScreen_pad;
+    uint LightCount;
+    uint3 padHdr;
+    GpuLight Lights[MAX_LIGHTS];
+};
+
+cbuffer ShadowCB : register(b1)
+{
+    row_major float4x4 LightViewProj[MAX_CASCADES];
+    row_major float4x4 CameraView;
+    float4 CascadeSplits;
+    float4 ShadowParams;
+};
+
+struct FsOut
+{
+    float4 pos : SV_POSITION;
+    float2 uv : TEXCOORD0;
+};
+
+FsOut LightingFullscreenVS(uint vid : SV_VertexID)
+{
+    FsOut o;
+    float2 uv = float2((vid << 1) & 2, vid & 2);
+    o.pos = float4(uv * float2(2.f, -2.f) + float2(-1.f, 1.f), 0.f, 1.f);
+    o.uv = float2(uv.x, 1.f - uv.y);
+    return o;
+}
+
+uint SelectCascade(float viewDepth)
+{
+    if (viewDepth < CascadeSplits.x)
+        return 0;
+    if (viewDepth < CascadeSplits.y)
+        return 1;
+    if (viewDepth < CascadeSplits.z)
+        return 2;
+    return 3;
+}
+
+float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
+{
+    float3 samplePos = worldPos + N * ShadowParams.z;
+
+    float viewDepth = mul(float4(samplePos, 1.f), CameraView).z;
+    uint cascade = SelectCascade(viewDepth);
+
+    float4 clip = mul(float4(samplePos, 1.f), LightViewProj[cascade]);
+    float3 ndc = clip.xyz / clip.w;
+    if (ndc.x < -1.f || ndc.x > 1.f || ndc.y < -1.f || ndc.y > 1.f)
+        return 1.f;
+
+    float2 uv = ndc.xy * 0.5f + 0.5f;
+    uv.y = 1.f - uv.y;
+    float depth = ndc.z;
+
+    float ndotl = saturate(dot(N, Ldir));
+    float slope = sqrt(1.f - ndotl * ndotl) / max(ndotl, 0.08f);
+    float bias = ShadowParams.y + ShadowParams.w * slope;
+
+    float texel = ShadowParams.x;
+    float shadow = 0.f;
+
+    [unroll]
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        [unroll]
+        for (int dx = -1; dx <= 1; ++dx)
+        {
+            float2 offset = float2(dx, dy) * texel;
+            shadow += ShadowMap.SampleCmpLevelZero(
+                ShadowSamp,
+                float3(uv + offset, cascade),
+                depth + bias);
+        }
+    }
+    shadow /= 9.f;
+    return shadow * shadow;
+}
+
+float4 LightingPS(FsOut pin) : SV_Target0
+{
+    float3 alb = GAlbedo.Sample(GSamp, pin.uv).rgb;
+    float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
+    float3 P = GPos.Sample(GSamp, pin.uv).xyz;
+
+    float3 color = alb * 0.01f;
+
+    if (dot(N, N) < 1e-6f)
+        return float4(color, 1.f);
+
+    N = normalize(N);
+    float3 V = normalize(CameraPos_pad.xyz - P);
+
+    for (uint i = 0; i < LightCount; ++i)
+    {
+        GpuLight Lg = Lights[i];
+        float3 Lc = Lg.color_intensity.xyz;
+        float I = Lg.color_intensity.w;
+        float3 Ldir = float3(0, 0, 0);
+        float att = 1.f;
+        float shadow = 1.f;
+
+        if (Lg.type == LIGHT_DIR)
+        {
+            Ldir = normalize(-Lg.direction_cosOuter.xyz);
+            shadow = SampleShadowPCF(P, N, Ldir);
+        }
+        else if (Lg.type == LIGHT_POINT)
+        {
+            float3 toL = Lg.position_range.xyz - P;
+            float dist = length(toL);
+            if (dist > Lg.position_range.w)
+                continue;
+            Ldir = toL / max(dist, 1e-5);
+            float t = 1.f - saturate(dist / Lg.position_range.w);
+            att = t * t;
+        }
+        else
+        {
+            float3 toL = Lg.position_range.xyz - P;
+            float dist = length(toL);
+            if (dist > Lg.position_range.w)
+                continue;
+            Ldir = toL / max(dist, 1e-5);
+            float t = 1.f - saturate(dist / Lg.position_range.w);
+            att = t * t;
+            float3 axis = normalize(Lg.direction_cosOuter.xyz);
+            float rho = dot(-Ldir, axis);
+            float cosO = Lg.direction_cosOuter.w;
+            float cosI = Lg.spotCosInner;
+            float spot = saturate((rho - cosO) / max(cosI - cosO, 1e-4));
+            att *= spot * spot;
+        }
+
+        float diff = saturate(dot(N, Ldir));
+        float3 H = normalize(Ldir + V);
+        float spec = pow(saturate(dot(N, H)), 64.f) * 0.22f;
+        color += (alb * diff + spec) * Lc * I * att * shadow;
+    }
+    return float4(color, 1.f);
+}
