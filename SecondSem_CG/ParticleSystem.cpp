@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <cwchar>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;

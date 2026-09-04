@@ -14,17 +14,21 @@
 #include <wrl/client.h>
 
 #include "ObjLoader.h"
+#include "ParticleSystem.h"
+#include "PostProcessSystem.h"
 #include "RenderingSystem.h"
 #include "ShadowSystem.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
 #include <cfloat>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
 #include <filesystem>
+#include <random>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,7 +49,10 @@ constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
 constexpr UINT kDeferredSrvBase = 400;
 constexpr UINT kShadowSrvBase = 403;
+constexpr UINT kParticleSrvBase = 404;
+constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kCbAlign = 256;
+constexpr UINT kCubeCount = 1000;
 
 struct alignas(256) FrameCB
 {
@@ -104,6 +111,8 @@ ComPtr<ID3D12PipelineState> g_pipelineGeo;
 
 RenderingSystem g_renderSys;
 ShadowSystem g_shadowSys;
+ParticleSystem g_particleSys;
+PostProcessSystem g_postProcessSys;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -125,6 +134,15 @@ UINT g_matCount = 0;
 ComPtr<ID3D12Resource> g_frameCBUpload;
 UINT8* g_frameCBMapped = nullptr;
 
+ComPtr<ID3D12Resource> g_cubeVB;
+ComPtr<ID3D12Resource> g_cubeIB;
+D3D12_VERTEX_BUFFER_VIEW g_cubeVbv{};
+D3D12_INDEX_BUFFER_VIEW g_cubeIbv{};
+ComPtr<ID3D12Resource> g_cubeFrameCBUpload;
+UINT8* g_cubeFrameCBMapped = nullptr;
+ComPtr<ID3D12Resource> g_cubeMatCBUpload;
+UINT8* g_cubeMatCBMapped = nullptr;
+
 UINT g_frameIndex = 0;
 float g_appTime = 0.0f;
 
@@ -135,6 +153,7 @@ bool g_camPrevRmb = false;
 
 XMFLOAT3 g_sceneCenter{0.f, 2.f, 0.f};
 float g_sceneRadius = 25.f;
+float g_particleFloorY = 0.f;
 
 LARGE_INTEGER g_qpcFreq{};
 LARGE_INTEGER g_qpcLast{};
@@ -164,6 +183,16 @@ std::wstring ExeDirectory()
 std::wstring DeferredShaderPath()
 {
     return ExeDirectory() + L"Deferred.hlsl";
+}
+
+std::wstring ParticleShaderPath()
+{
+    return ExeDirectory() + L"Particles.hlsl";
+}
+
+std::wstring PostProcessShaderPath()
+{
+    return ExeDirectory() + L"PostProcess.hlsl";
 }
 
 void CompileShader(const wchar_t* path, const char* entry, const char* target, ComPtr<ID3DBlob>& out)
@@ -273,6 +302,7 @@ void ResizeSwapChain(UINT w, UINT h)
     {
         g_renderSys.Resize(
             g_device.Get(), w, h, g_srvHeap.Get(), g_srvDescriptorSize);
+        g_postProcessSys.Resize(g_device.Get(), w, h, g_srvHeap.Get());
     }
 }
 
@@ -482,10 +512,24 @@ static bool MaterialPathSuggestSway(const std::wstring& rel)
 
 XMMATRIX MeshWorldTransform()
 {
+    // This Sponza export is upside-down relative to the application's Y-up
+    // world. RotationX(PI) converts (x,y,z) to (x,-y,-z). Its determinant is
+    // positive, so triangle winding is preserved.
     return XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
 }
 
-void ComputeSceneBounds()
+static bool IsFloorMaterial(UINT materialIndex)
+{
+    if (materialIndex >= g_mesh.materials.size())
+        return false;
+    std::string name = g_mesh.materials[materialIndex].name;
+    std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return name.find("floor") != std::string::npos;
+}
+
+void ComputeSceneMeasurements()
 {
     if (g_mesh.vertices.empty())
         return;
@@ -506,6 +550,27 @@ void ComputeSceneBounds()
     const XMVECTOR extent = XMVectorSubtract(bmax, bmin);
     XMStoreFloat3(&g_sceneCenter, center);
     g_sceneRadius = XMVectorGetX(XMVector3Length(extent)) * 0.5f + 2.f;
+
+    float upperFloor = -FLT_MAX;
+    for (const Obj::Submesh& submesh : g_mesh.submeshes)
+    {
+        if (!IsFloorMaterial(submesh.materialIndex))
+            continue;
+        const UINT end = submesh.indexStart + submesh.indexCount;
+        for (UINT i = submesh.indexStart; i < end && i < g_mesh.indices.size(); ++i)
+        {
+            const UINT vertexIndex = g_mesh.indices[i];
+            if (vertexIndex >= g_mesh.vertices.size())
+                continue;
+            const Obj::MeshVertex& vertex = g_mesh.vertices[vertexIndex];
+            const XMVECTOR position = XMVector3TransformCoord(
+                XMVectorSet(vertex.px, vertex.py, vertex.pz, 1.f), world);
+            upperFloor = (std::max)(upperFloor, XMVectorGetY(position));
+        }
+    }
+    // The known Sponza has two floor levels; the upper one is the maximum Y.
+    // Fall back to the bottom of the scene only if the floor material is absent.
+    g_particleFloorY = upperFloor != -FLT_MAX ? upperFloor : XMVectorGetY(bmin);
 }
 
 bool LoadScene()
@@ -618,9 +683,13 @@ bool LoadScene()
 
     for (size_t i = 0; i < g_mesh.materials.size(); ++i)
     {
-        if (nextSlot + 2u > kSrvHeapCount)
+        // Slots [kDeferredSrvBase, ...] are reserved for the G-buffer,
+        // shadow map and particle UAV/SRV descriptors.
+        if (nextSlot + 2u > kDeferredSrvBase)
         {
-            MessageBoxW(g_hwnd, L"Переполнение кучи SRV.", L"Текстуры", MB_OK | MB_ICONWARNING);
+            MessageBoxW(
+                g_hwnd, L"Слишком много текстур: достигнута зарезервированная область SRV.",
+                L"Текстуры", MB_OK | MB_ICONWARNING);
             break;
         }
 
@@ -690,11 +759,98 @@ bool LoadScene()
     }
 
     g_sceneReady = true;
-    ComputeSceneBounds();
+    ComputeSceneMeasurements();
     return true;
 }
 
-void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
+void CreateCubes()
+{
+    std::vector<Obj::MeshVertex> vertices;
+    std::vector<uint32_t> indices;
+    vertices.reserve(kCubeCount * 24u);
+    indices.reserve(kCubeCount * 36u);
+
+    std::mt19937 random(0xC0BEEu);
+    std::uniform_real_distribution<float> xDistribution(-8.0f, 8.0f);
+    std::uniform_real_distribution<float> zDistribution(-5.0f, 5.0f);
+    std::uniform_real_distribution<float> heightDistribution(0.0f, 8.0f);
+    std::uniform_real_distribution<float> sizeDistribution(0.18f, 0.48f);
+    std::uniform_real_distribution<float> colorDistribution(0.18f, 1.0f);
+
+    const XMFLOAT3 normals[6] = {
+        {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, {0.f, 1.f, 0.f},
+        {0.f, -1.f, 0.f}, {0.f, 0.f, 1.f}, {0.f, 0.f, -1.f}};
+    const XMFLOAT3 tangents[6] = {
+        {0.f, 0.f, -1.f}, {0.f, 0.f, 1.f}, {1.f, 0.f, 0.f},
+        {1.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}};
+    const XMFLOAT3 bitangents[6] = {
+        {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}, {0.f, 0.f, -1.f},
+        {0.f, 0.f, 1.f}, {0.f, 1.f, 0.f}, {0.f, 1.f, 0.f}};
+    const XMFLOAT2 uv[4] = {{0.f, 1.f}, {1.f, 1.f}, {1.f, 0.f}, {0.f, 0.f}};
+    const float cornerSigns[4][2] = {{-1.f, -1.f}, {1.f, -1.f}, {1.f, 1.f}, {-1.f, 1.f}};
+
+    g_cubeMatCBUpload = CreateUploadBuffer(nullptr, static_cast<UINT64>(kCubeCount) * kCbAlign);
+    D3D12_RANGE noRead{0, 0};
+    ThrowIfFailed(g_cubeMatCBUpload->Map(
+        0, &noRead, reinterpret_cast<void**>(&g_cubeMatCBMapped)));
+
+    for (UINT cube = 0; cube < kCubeCount; ++cube)
+    {
+        const float side = sizeDistribution(random);
+        const float half = side * 0.5f;
+        const XMFLOAT3 center{
+            xDistribution(random),
+            g_particleFloorY + half + 0.01f + heightDistribution(random),
+            zDistribution(random)};
+
+        const uint32_t cubeVertexStart = static_cast<uint32_t>(vertices.size());
+        for (UINT face = 0; face < 6; ++face)
+        {
+            const XMFLOAT3& n = normals[face];
+            const XMFLOAT3& t = tangents[face];
+            const XMFLOAT3& b = bitangents[face];
+            for (UINT corner = 0; corner < 4; ++corner)
+            {
+                const float ts = cornerSigns[corner][0];
+                const float bs = cornerSigns[corner][1];
+                Obj::MeshVertex vertex{};
+                vertex.px = center.x + (n.x + t.x * ts + b.x * bs) * half;
+                vertex.py = center.y + (n.y + t.y * ts + b.y * bs) * half;
+                vertex.pz = center.z + (n.z + t.z * ts + b.z * bs) * half;
+                vertex.nx = n.x;
+                vertex.ny = n.y;
+                vertex.nz = n.z;
+                vertex.u = uv[corner].x;
+                vertex.v = uv[corner].y;
+                vertices.push_back(vertex);
+            }
+            const uint32_t base = cubeVertexStart + face * 4u;
+            indices.insert(indices.end(), {base, base + 1u, base + 2u, base, base + 2u, base + 3u});
+        }
+
+        auto* material = reinterpret_cast<MatCBGPU*>(
+            g_cubeMatCBMapped + static_cast<size_t>(cube) * kCbAlign);
+        std::memset(material, 0, sizeof(MatCBGPU));
+        material->Kd = XMFLOAT4(
+            colorDistribution(random), colorDistribution(random), colorDistribution(random), 1.f);
+        material->UvScale = XMFLOAT2(1.f, 1.f);
+        material->Ks = XMFLOAT3(0.12f, 0.12f, 0.12f);
+        material->Ns = 24.f;
+    }
+
+    const UINT vbSize = static_cast<UINT>(vertices.size() * sizeof(Obj::MeshVertex));
+    const UINT ibSize = static_cast<UINT>(indices.size() * sizeof(uint32_t));
+    g_cubeVB = CreateUploadBuffer(vertices.data(), vbSize);
+    g_cubeIB = CreateUploadBuffer(indices.data(), ibSize);
+    g_cubeVbv = {g_cubeVB->GetGPUVirtualAddress(), vbSize, sizeof(Obj::MeshVertex)};
+    g_cubeIbv = {g_cubeIB->GetGPUVirtualAddress(), ibSize, DXGI_FORMAT_R32_UINT};
+
+    g_cubeFrameCBUpload = CreateUploadBuffer(nullptr, sizeof(FrameCB));
+    ThrowIfFailed(g_cubeFrameCBUpload->Map(
+        0, &noRead, reinterpret_cast<void**>(&g_cubeFrameCBMapped)));
+}
+
+void WriteFrameCBTo(UINT8* destination, const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
 {
     FrameCB data{};
     XMStoreFloat4x4(&data.World, world);
@@ -703,7 +859,12 @@ void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec
         XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
     // xy = UV scroll; z = sway amplitude (local OBJ units); w = sway speed scale
     data.UvAnimAndPad = XMFLOAT4(0.035f, 0.022f, 5.5f, 1.0f);
-    std::memcpy(g_frameCBMapped, &data, sizeof(FrameCB));
+    std::memcpy(destination, &data, sizeof(FrameCB));
+}
+
+void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
+{
+    WriteFrameCBTo(g_frameCBMapped, world, viewProj, timeSec);
 }
 
 XMMATRIX CalcView()
@@ -724,6 +885,14 @@ XMMATRIX CalcProj()
 XMMATRIX CalcViewProj()
 {
     return CalcView() * CalcProj();
+}
+
+XMFLOAT3 ParticleEmitterPosition()
+{
+    // Vertical offset of the emitter relative to the detected upper floor.
+    constexpr float spawnClearance = -1.00f;
+    return XMFLOAT3(
+        g_sceneCenter.x, g_particleFloorY + spawnClearance, g_sceneCenter.z);
 }
 
 void UpdateCamera(float dt)
@@ -830,6 +999,33 @@ void DrawScene(const XMMATRIX& viewProj)
     }
 }
 
+void DrawCubes(const XMMATRIX& viewProj)
+{
+    if (!g_cubeVB || !g_cubeIB || !g_cubeMatCBUpload)
+        return;
+
+    ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
+    g_cmdList->SetDescriptorHeaps(1, heaps);
+    g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
+    g_cmdList->SetPipelineState(g_pipelineGeo.Get());
+
+    WriteFrameCBTo(g_cubeFrameCBMapped, XMMatrixIdentity(), viewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, g_cubeFrameCBUpload->GetGPUVirtualAddress());
+    g_cmdList->SetGraphicsRootDescriptorTable(
+        2, g_srvHeap->GetGPUDescriptorHandleForHeapStart());
+    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_cmdList->IASetVertexBuffers(0, 1, &g_cubeVbv);
+    g_cmdList->IASetIndexBuffer(&g_cubeIbv);
+
+    for (UINT cube = 0; cube < kCubeCount; ++cube)
+    {
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            1, g_cubeMatCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(cube) * kCbAlign);
+        g_cmdList->DrawIndexedInstanced(36, 1, cube * 36u, 0, 0);
+    }
+}
+
 void DrawSceneDepth(const XMMATRIX& lightViewProj)
 {
     if (!g_sceneReady)
@@ -894,8 +1090,17 @@ void DrawFrame(float dt)
     g_cmdList->RSSetScissorRects(1, &scissor);
 
     DrawScene(viewProj);
+    DrawCubes(viewProj);
+    g_particleSys.UpdateAndDraw(
+        g_cmdList.Get(), g_srvHeap.Get(), g_frameIndex, dt, g_appTime, view, viewProj,
+        g_camPos, ParticleEmitterPosition(), g_particleFloorY);
 
     gb.TransitionToShaderResource(g_cmdList.Get());
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv = g_postProcessSys.BeginScene(g_cmdList.Get());
+    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
+    g_renderSys.DrawLightingPass(
+        g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, sceneRtv, g_width, g_height);
 
     ComPtr<ID3D12Resource> backBuffer = g_renderTargets[g_frameIndex];
     const D3D12_RESOURCE_STATES rtBefore =
@@ -906,8 +1111,7 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
-    g_renderSys.DrawLightingPass(g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, rtv, g_width, g_height);
+    g_postProcessSys.Apply(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1013,7 +1217,21 @@ void InitD3D(HWND hwnd)
         kShadowSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
+    g_postProcessSys.Init(
+        g_device.Get(), g_width, g_height, g_srvHeap.Get(), kPostProcessSrvBase,
+        g_srvDescriptorSize, PostProcessShaderPath().c_str());
     LoadScene();
+    CreateCubes();
+
+    // Particle buffers live in the default heap, so their initial contents and
+    // Append/Consume counters are uploaded once through the command list.
+    ThrowIfFailed(g_cmdAlloc[0]->Reset());
+    ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), nullptr));
+    g_particleSys.Init(
+        g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), kParticleSrvBase,
+        g_srvDescriptorSize, ParticleShaderPath().c_str(), ParticleEmitterPosition());
+    ExecuteCommandList();
+    g_particleSys.ReleaseUploadResources();
 }
 
 void ShutdownD3D()

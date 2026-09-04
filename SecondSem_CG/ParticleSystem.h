@@ -6,7 +6,7 @@
 #include <DirectXMath.h>
 #include <wrl/client.h>
 
-// GPU particle system.  The two particle buffers exchange their roles every
+// GPU particle system. The two particle buffers exchange their roles every
 // frame: the compute shader consumes one and appends the updated particles to
 // the other one.
 class ParticleSystem

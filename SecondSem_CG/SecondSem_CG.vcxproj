@@ -90,7 +90,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -110,7 +110,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -128,7 +128,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,7 +148,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -158,10 +158,18 @@
     <ClCompile Include="GBuffer.cpp" />
     <ClCompile Include="RenderingSystem.cpp" />
     <ClCompile Include="ShadowSystem.cpp" />
+    <ClCompile Include="ParticleSystem.cpp" />
+    <ClCompile Include="PostProcessSystem.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders.hlsl" />
     <None Include="Deferred.hlsl" />
+    <None Include="Particles.hlsl" />
+    <None Include="PostProcess.hlsl" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ParticleSystem.h" />
+    <ClInclude Include="PostProcessSystem.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

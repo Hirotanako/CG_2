@@ -24,10 +24,30 @@
     <ClCompile Include="RenderingSystem.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="ParticleSystem.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
+    <ClCompile Include="PostProcessSystem.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="Deferred.hlsl">
       <Filter>Файлы ресурсов</Filter>
     </None>
+    <None Include="Particles.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
+    <None Include="PostProcess.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="ParticleSystem.h">
+      <Filter>Исходные файлы</Filter>
+    </ClInclude>
+    <ClInclude Include="PostProcessSystem.h">
+      <Filter>Исходные файлы</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

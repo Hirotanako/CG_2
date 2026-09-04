@@ -1,6 +1,8 @@
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\ObjLoader.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\ObjLoader.obj
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\SecondSem_CG.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.obj
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\TextureUtil.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\TextureUtil.obj
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\GBuffer.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\GBuffer.obj
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\RenderingSystem.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\RenderingSystem.obj
-C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\ShadowSystem.cpp;C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\ShadowSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ObjLoader.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\ObjLoader.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\SecondSem_CG.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\SecondSem_CG.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\TextureUtil.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\TextureUtil.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\GBuffer.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\GBuffer.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\RenderingSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\RenderingSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ShadowSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\ShadowSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ParticleSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\ParticleSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\PostProcessSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\PostProcessSystem.obj

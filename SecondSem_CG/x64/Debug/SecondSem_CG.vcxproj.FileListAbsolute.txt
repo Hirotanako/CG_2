@@ -1,3 +1,4 @@
 c:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\x64\Debug\SecondSem_CG.exe
 C:\Users\JdasK\source\repos\SecondSem_CG\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.exe
 C:\Users\Фёдор\source\repos\CG_SECOND_COURSE\CG_2\SecondSem_CG\x64\Debug\SecondSem_CG.exe
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Debug\SecondSem_CG.exe

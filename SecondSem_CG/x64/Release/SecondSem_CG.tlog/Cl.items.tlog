@@ -1,3 +1,7 @@
-C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\ObjLoader.cpp;C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\x64\Release\ObjLoader.obj
-C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\SecondSem_CG.cpp;C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\x64\Release\SecondSem_CG.obj
-C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\TextureUtil.cpp;C:\Users\JdasK\source\repos\SecondSem_CG\SecondSem_CG\x64\Release\TextureUtil.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ObjLoader.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\ObjLoader.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\SecondSem_CG.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\SecondSem_CG.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\TextureUtil.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\TextureUtil.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\GBuffer.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\GBuffer.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\RenderingSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\RenderingSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ShadowSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\ShadowSystem.obj
+C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\ParticleSystem.cpp;C:\Users\JdasK\Downloads\CG_2_last_labs\CG_2-a806dd099f6820f5fe33b880b2003f826e551033\SecondSem_CG\x64\Release\ParticleSystem.obj
