@@ -19,11 +19,17 @@ cbuffer MatCB : register(b1)
     uint UseUvAnim;
     uint HasSpecularTex;
     uint UseSwayAnim;
-    float _PadMat[49];
+    float Metallic;
+    float Roughness;
+    uint HasNormalTex;
+    float2 PadMaterial;
+    float4 _PadMat[11];
 };
 
 Texture2D Albedo : register(t0);
-Texture2D SpecMap : register(t1);
+Texture2D MetallicMap : register(t1);
+Texture2D RoughnessMap : register(t2);
+Texture2D NormalMap : register(t3);
 SamplerState Samp : register(s0);
 
 struct GeoVsIn
@@ -96,8 +102,28 @@ GeoRtOut GeometryPS(GeoVsOut input)
     if (UseUvAnim != 0)
         uv += UvAnimAndPad.xy * time;
     float3 a = Albedo.Sample(Samp, uv).rgb * Kd.rgb;
-    o.albedo = float4(a, 1);
-    o.normal = float4(normalize(input.nrmW), 0);
+    float metallic = saturate(Metallic);
+    if (HasSpecularTex != 0)
+        metallic = saturate(metallic * MetallicMap.Sample(Samp, uv).r);
+    float roughness = clamp(Roughness * RoughnessMap.Sample(Samp, uv).r, 0.045, 1.0);
+
+    float3 normalW = normalize(input.nrmW);
+    if (HasNormalTex != 0)
+    {
+        float3 tangentNormal = NormalMap.Sample(Samp, uv).xyz * 2.0 - 1.0;
+        float3 dpdx = ddx(input.posW);
+        float3 dpdy = ddy(input.posW);
+        float2 duvdx = ddx(uv);
+        float2 duvdy = ddy(uv);
+        float3 tangent = normalize(dpdx * duvdy.y - dpdy * duvdx.y);
+        float3 bitangent = normalize(-dpdx * duvdy.x + dpdy * duvdx.x);
+        normalW = normalize(
+            tangent * tangentNormal.x + bitangent * tangentNormal.y + normalW * tangentNormal.z);
+    }
+
+    // Albedo.a and Normal.a carry the PBR parameters through the G-buffer.
+    o.albedo = float4(a, metallic);
+    o.normal = float4(normalW, roughness);
     o.position = float4(input.posW, 1);
     return o;
 }
@@ -108,8 +134,10 @@ Texture2D GAlbedo : register(t0);
 Texture2D GNormal : register(t1);
 Texture2D GPos : register(t2);
 Texture2DArray ShadowMap : register(t3);
+Texture2D EnvironmentMap : register(t4);
 SamplerState GSamp : register(s0);
 SamplerComparisonState ShadowSamp : register(s1);
+SamplerState EnvironmentSamp : register(s2);
 
 #define LIGHT_DIR 0
 #define LIGHT_POINT 1
@@ -210,19 +238,71 @@ float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
     return shadow * shadow;
 }
 
+static const float PI = 3.14159265359;
+
+float DistributionGGX(float3 N, float3 H, float roughness)
+{
+    float a = roughness * roughness;
+    float a2 = a * a;
+    float nDotH = saturate(dot(N, H));
+    float denominator = nDotH * nDotH * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * denominator * denominator, 1e-5);
+}
+
+float GeometrySchlickGGX(float nDotV, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    return nDotV / max(nDotV * (1.0 - k) + k, 1e-5);
+}
+
+float GeometrySmith(float3 N, float3 V, float3 L, float roughness)
+{
+    return GeometrySchlickGGX(saturate(dot(N, V)), roughness)
+        * GeometrySchlickGGX(saturate(dot(N, L)), roughness);
+}
+
+float3 FresnelSchlick(float cosTheta, float3 f0)
+{
+    return f0 + (1.0 - f0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+float3 FresnelSchlickRoughness(float cosTheta, float3 f0, float roughness)
+{
+    return f0 + (max(float3(1.0 - roughness, 1.0 - roughness, 1.0 - roughness), f0) - f0)
+        * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+float2 DirectionToLatLong(float3 direction)
+{
+    direction = normalize(direction);
+    return float2(atan2(direction.z, direction.x) / (2.0 * PI) + 0.5,
+        acos(clamp(direction.y, -1.0, 1.0)) / PI);
+}
+
+float3 SampleEnvironment(float3 direction)
+{
+    return EnvironmentMap.SampleLevel(EnvironmentSamp, DirectionToLatLong(direction), 0).rgb;
+}
+
 float4 LightingPS(FsOut pin) : SV_Target0
 {
-    float3 alb = GAlbedo.Sample(GSamp, pin.uv).rgb;
-    float3 N = GNormal.Sample(GSamp, pin.uv).xyz;
+    float4 albedoMetallic = GAlbedo.Sample(GSamp, pin.uv);
+    float3 alb = albedoMetallic.rgb;
+    float metallic = saturate(albedoMetallic.a);
+    float4 normalRoughness = GNormal.Sample(GSamp, pin.uv);
+    float3 N = normalRoughness.xyz;
+    float roughness = clamp(normalRoughness.a, 0.045, 1.0);
     float3 P = GPos.Sample(GSamp, pin.uv).xyz;
 
-    float3 color = alb * 0.01f;
-
     if (dot(N, N) < 1e-6f)
-        return float4(color, 1.f);
+        return float4(alb, 1.f);
 
     N = normalize(N);
     float3 V = normalize(CameraPos_pad.xyz - P);
+    float nDotV = saturate(dot(N, V));
+    float3 f0 = lerp(float3(0.04, 0.04, 0.04), alb, metallic);
+    float3 directLighting = 0.0;
 
     for (uint i = 0; i < LightCount; ++i)
     {
@@ -246,7 +326,7 @@ float4 LightingPS(FsOut pin) : SV_Target0
                 continue;
             Ldir = toL / max(dist, 1e-5);
             float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
+            att = t * t / max(dist * dist, 0.04);
         }
         else
         {
@@ -256,7 +336,7 @@ float4 LightingPS(FsOut pin) : SV_Target0
                 continue;
             Ldir = toL / max(dist, 1e-5);
             float t = 1.f - saturate(dist / Lg.position_range.w);
-            att = t * t;
+            att = t * t / max(dist * dist, 0.04);
             float3 axis = normalize(Lg.direction_cosOuter.xyz);
             float rho = dot(-Ldir, axis);
             float cosO = Lg.direction_cosOuter.w;
@@ -265,10 +345,33 @@ float4 LightingPS(FsOut pin) : SV_Target0
             att *= spot * spot;
         }
 
-        float diff = saturate(dot(N, Ldir));
+        float nDotL = saturate(dot(N, Ldir));
         float3 H = normalize(Ldir + V);
-        float spec = pow(saturate(dot(N, H)), 64.f) * 0.22f;
-        color += (alb * diff + spec) * Lc * I * att * shadow;
+        float3 fresnel = FresnelSchlick(saturate(dot(H, V)), f0);
+        float distribution = DistributionGGX(N, H, roughness);
+        float geometry = GeometrySmith(N, V, Ldir, roughness);
+        float3 specular = distribution * geometry * fresnel
+            / max(4.0 * nDotV * nDotL, 1e-4);
+        float3 diffuseWeight = (1.0 - fresnel) * (1.0 - metallic);
+        float3 radiance = Lc * I * att * shadow;
+        directLighting += (diffuseWeight * alb / PI + specular) * radiance * nDotL;
     }
+
+    // IBL ambient: the normal samples diffuse irradiance, while the reflected
+    // view vector samples the specular environment. Rough surfaces blend the
+    // reflection toward the low-frequency irradiance direction.
+    float3 reflection = reflect(-V, N);
+    float3 irradiance = SampleEnvironment(N);
+    float3 reflectedEnvironment = SampleEnvironment(reflection);
+    float3 prefilteredEnvironment = lerp(reflectedEnvironment, irradiance, roughness * roughness);
+    float3 ambientFresnel = FresnelSchlickRoughness(nDotV, f0, roughness);
+    float3 ambientDiffuseWeight = (1.0 - ambientFresnel) * (1.0 - metallic);
+    float2 environmentBrdf = float2(1.0 - roughness * 0.55, roughness * 0.04);
+    float3 ambient = ambientDiffuseWeight * irradiance * alb
+        + prefilteredEnvironment * (ambientFresnel * environmentBrdf.x + environmentBrdf.y);
+
+    float3 color = directLighting + ambient * 0.45;
+    color = color / (color + 1.0);
+    color = pow(saturate(color), 1.0 / 2.2);
     return float4(color, 1.f);
 }

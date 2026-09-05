@@ -22,6 +22,7 @@ public:
         ID3D12DescriptorHeap* shaderVisibleSrvHeap,
         UINT gbufferSrvStartIndex,
         UINT shadowSrvStartIndex,
+        UINT iblSrvIndex,
         UINT srvDescriptorIncrement,
         const wchar_t* deferredHlslPath);
 
@@ -62,6 +63,7 @@ private:
 
     UINT m_gbufferSrvBase = 0;
     UINT m_shadowSrvBase = 0;
+    UINT m_iblSrvIndex = 0;
     UINT m_srvDescriptorIncrement = 0;
     DirectX::XMFLOAT3 m_sunDirection{0.35f, 0.82f, 0.45f};
 };

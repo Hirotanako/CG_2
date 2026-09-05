@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cfloat>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -51,6 +52,9 @@ constexpr UINT kDeferredSrvBase = 400;
 constexpr UINT kShadowSrvBase = 403;
 constexpr UINT kParticleSrvBase = 404;
 constexpr UINT kPostProcessSrvBase = 408;
+constexpr UINT kIblSrvBase = 410;
+constexpr UINT kCerberusMaterialSrvBase = 380;
+constexpr UINT kWoodMaterialSrvBase = 384;
 constexpr UINT kCbAlign = 256;
 constexpr UINT kCubeCount = 1000;
 
@@ -75,7 +79,11 @@ struct alignas(256) MatCBGPU
     UINT UseUvAnim;
     UINT HasSpecularTex;
     UINT UseSwayAnim;
-    float _PadMat[49];
+    float Metallic;
+    float Roughness;
+    UINT HasNormalTex;
+    float _PadMaterial[2];
+    float _PadMat[44];
 };
 
 static_assert(sizeof(MatCBGPU) == 256);
@@ -127,6 +135,9 @@ D3D12_INDEX_BUFFER_VIEW g_meshIbv{};
 std::vector<uint32_t> g_matSrvPairBase;
 std::vector<ComPtr<ID3D12Resource>> g_gpuTextures;
 ComPtr<ID3D12Resource> g_whiteTexture;
+ComPtr<ID3D12Resource> g_blackTexture;
+ComPtr<ID3D12Resource> g_flatNormalTexture;
+ComPtr<ID3D12Resource> g_environmentTexture;
 ComPtr<ID3D12Resource> g_matCBUpload;
 UINT8* g_matCBMapped = nullptr;
 UINT g_matCount = 0;
@@ -354,7 +365,7 @@ void CreateGeometryPipeline()
 {
     D3D12_DESCRIPTOR_RANGE range{};
     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    range.NumDescriptors = 2;
+    range.NumDescriptors = 4;
     range.BaseShaderRegister = 0;
     range.RegisterSpace = 0;
     range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -580,6 +591,9 @@ bool LoadScene()
     g_matSrvPairBase.clear();
     g_gpuTextures.clear();
     g_whiteTexture.Reset();
+    g_blackTexture.Reset();
+    g_flatNormalTexture.Reset();
+    g_environmentTexture.Reset();
     g_meshVB.Reset();
     g_meshIB.Reset();
     g_matCBUpload.Reset();
@@ -643,9 +657,22 @@ bool LoadScene()
     }
     g_whiteTexture = whiteTex;
     g_gpuTextures.push_back(whiteTex);
+
+    if (!Tex::CreateSolidTexture2D(
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot + 1u,
+            g_srvDescriptorSize, 0xFF000000u, g_blackTexture, uploadKeep) ||
+        !Tex::CreateSolidTexture2D(
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), nextSlot + 3u,
+            g_srvDescriptorSize, 0xFFFF8080u, g_flatNormalTexture, uploadKeep))
+    {
+        MessageBoxW(g_hwnd, L"Не удалось создать PBR-текстуры по умолчанию.", L"PBR", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    g_gpuTextures.push_back(g_blackTexture);
+    g_gpuTextures.push_back(g_flatNormalTexture);
     Tex::WriteTexture2DSrv(
-        g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), nextSlot + 1, g_srvDescriptorSize);
-    nextSlot += 2;
+        g_device.Get(), whiteTex.Get(), g_srvHeap.Get(), nextSlot + 2u, g_srvDescriptorSize);
+    nextSlot += 4;
 
     std::unordered_map<std::wstring, ComPtr<ID3D12Resource>> texCache;
 
@@ -683,9 +710,9 @@ bool LoadScene()
 
     for (size_t i = 0; i < g_mesh.materials.size(); ++i)
     {
-        // Slots [kDeferredSrvBase, ...] are reserved for the G-buffer,
-        // shadow map and particle UAV/SRV descriptors.
-        if (nextSlot + 2u > kDeferredSrvBase)
+        // The high descriptor area is reserved for the two PBR showcase
+        // materials, G-buffer, shadows, particles, post process and IBL.
+        if (nextSlot + 4u > kCerberusMaterialSrvBase)
         {
             MessageBoxW(
                 g_hwnd, L"Слишком много текстур: достигнута зарезервированная область SRV.",
@@ -693,28 +720,83 @@ bool LoadScene()
             break;
         }
 
-        const uint32_t pairBase = nextSlot;
-        nextSlot += 2;
-        g_matSrvPairBase[i] = pairBase;
+        const uint32_t materialBase = nextSlot;
+        nextSlot += 4;
+        g_matSrvPairBase[i] = materialBase;
 
         const Obj::Material& m = g_mesh.materials[i];
 
         if (m.diffuseMapRel.empty())
             Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase, g_srvDescriptorSize);
+                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), materialBase, g_srvDescriptorSize);
         else
-            bindTextureSlot(pairBase, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.diffuseMapRel));
+            bindTextureSlot(materialBase, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.diffuseMapRel));
 
-        bool specLoaded = false;
-        if (m.specularMapRel.empty())
-            Tex::WriteTexture2DSrv(
-                g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), pairBase + 1, g_srvDescriptorSize);
-        else
-            specLoaded =
-                bindTextureSlot(pairBase + 1, Tex::ResolveTexturePathInTexturesFolder(mtlDir, m.specularMapRel));
-
-        matHasSpecularTex[i] = specLoaded ? 1 : 0;
+        Tex::WriteTexture2DSrv(
+            g_device.Get(), g_blackTexture.Get(), g_srvHeap.Get(), materialBase + 1u, g_srvDescriptorSize);
+        Tex::WriteTexture2DSrv(
+            g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), materialBase + 2u, g_srvDescriptorSize);
+        Tex::WriteTexture2DSrv(
+            g_device.Get(), g_flatNormalTexture.Get(), g_srvHeap.Get(), materialBase + 3u, g_srvDescriptorSize);
+        matHasSpecularTex[i] = 0;
     }
+
+    // The two newly added folders provide complete PBR texture sets. They are
+    // assigned to the first two larger showcase cubes.
+    const std::filesystem::path cerberus = mtlDir / L"Cerberus_by_Andrew_Maximov" / L"Textures";
+    bindTextureSlot(kCerberusMaterialSrvBase + 0u, cerberus / L"Cerberus_A.jpg");
+    bindTextureSlot(kCerberusMaterialSrvBase + 1u, cerberus / L"Cerberus_M.jpg");
+    bindTextureSlot(kCerberusMaterialSrvBase + 2u, cerberus / L"Cerberus_R.jpg");
+    bindTextureSlot(kCerberusMaterialSrvBase + 3u, cerberus / L"Cerberus_N.jpg");
+
+    const std::filesystem::path wood = mtlDir / L"wood_root";
+    bindTextureSlot(kWoodMaterialSrvBase + 0u, wood / L"Aset_wood_root_M_rkswd_2K_Albedo.jpg");
+    Tex::WriteTexture2DSrv(
+        g_device.Get(), g_blackTexture.Get(), g_srvHeap.Get(), kWoodMaterialSrvBase + 1u,
+        g_srvDescriptorSize);
+    bindTextureSlot(kWoodMaterialSrvBase + 2u, wood / L"Aset_wood_root_M_rkswd_2K_Roughness.jpg");
+    bindTextureSlot(kWoodMaterialSrvBase + 3u, wood / L"Aset_wood_root_M_rkswd_2K_Normal_LOD0.jpg");
+
+    // Procedural equirectangular environment map used as the image source for
+    // diffuse irradiance and specular IBL.
+    constexpr UINT environmentWidth = 256;
+    constexpr UINT environmentHeight = 128;
+    std::vector<uint8_t> environmentPixels(environmentWidth * environmentHeight * 4u);
+    for (UINT y = 0; y < environmentHeight; ++y)
+    {
+        const float v = static_cast<float>(y) / static_cast<float>(environmentHeight - 1u);
+        for (UINT x = 0; x < environmentWidth; ++x)
+        {
+            const float sun = std::pow((std::max)(0.0f,
+                std::cos((static_cast<float>(x) / environmentWidth - 0.72f) * XM_2PI)), 32.0f)
+                * std::pow((std::max)(0.0f, 1.0f - std::abs(v - 0.42f) * 8.0f), 8.0f);
+            const XMFLOAT3 top{0.12f, 0.28f, 0.52f};
+            const XMFLOAT3 horizon{0.62f, 0.72f, 0.78f};
+            const XMFLOAT3 ground{0.10f, 0.075f, 0.045f};
+            const float skyT = (std::min)(v * 2.0f, 1.0f);
+            const bool isSky = v <= 0.5f;
+            const float r = isSky ? top.x + (horizon.x - top.x) * skyT :
+                horizon.x + (ground.x - horizon.x) * ((v - 0.5f) * 2.0f);
+            const float g = isSky ? top.y + (horizon.y - top.y) * skyT :
+                horizon.y + (ground.y - horizon.y) * ((v - 0.5f) * 2.0f);
+            const float b = isSky ? top.z + (horizon.z - top.z) * skyT :
+                horizon.z + (ground.z - horizon.z) * ((v - 0.5f) * 2.0f);
+            const size_t pixel = (static_cast<size_t>(y) * environmentWidth + x) * 4u;
+            environmentPixels[pixel + 0] = static_cast<uint8_t>((std::min)(1.0f, r + sun) * 255.0f);
+            environmentPixels[pixel + 1] = static_cast<uint8_t>((std::min)(1.0f, g + sun * 0.82f) * 255.0f);
+            environmentPixels[pixel + 2] = static_cast<uint8_t>((std::min)(1.0f, b + sun * 0.55f) * 255.0f);
+            environmentPixels[pixel + 3] = 255;
+        }
+    }
+    if (!Tex::CreateTexture2DFromRgba8(
+            g_device.Get(), g_cmdList.Get(), g_srvHeap.Get(), kIblSrvBase,
+            g_srvDescriptorSize, environmentWidth, environmentHeight,
+            environmentPixels.data(), g_environmentTexture, uploadKeep))
+    {
+        MessageBoxW(g_hwnd, L"Не удалось создать environment map для IBL.", L"IBL", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    g_gpuTextures.push_back(g_environmentTexture);
 
     ExecuteCommandList();
     uploadKeep.clear();
@@ -747,6 +829,10 @@ bool LoadScene()
             slot->UseUvAnim = MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1u : 0u;
             slot->HasSpecularTex = matHasSpecularTex[i];
             slot->UseSwayAnim = MaterialPathSuggestSway(mm.diffuseMapRel) ? 1u : 0u;
+            slot->Metallic = 0.0f;
+            slot->Roughness = std::clamp(
+                std::sqrt(2.0f / ((std::max)(mm.Ns, 1.0f) + 2.0f)), 0.12f, 1.0f);
+            slot->HasNormalTex = 0;
         }
         else
         {
@@ -755,6 +841,8 @@ bool LoadScene()
             slot->UvOffset = XMFLOAT2(0.0f, 0.0f);
             slot->Ks = XMFLOAT3(0.2f, 0.2f, 0.2f);
             slot->Ns = 32.0f;
+            slot->Metallic = 0.0f;
+            slot->Roughness = 0.55f;
         }
     }
 
@@ -796,12 +884,14 @@ void CreateCubes()
 
     for (UINT cube = 0; cube < kCubeCount; ++cube)
     {
-        const float side = sizeDistribution(random);
+        const float side = cube == 0u ? 1.20f : (cube == 1u ? 0.60f : sizeDistribution(random));
         const float half = side * 0.5f;
-        const XMFLOAT3 center{
-            xDistribution(random),
-            g_particleFloorY + half + 0.01f + heightDistribution(random),
-            zDistribution(random)};
+        const XMFLOAT3 center = cube < 2u
+            ? XMFLOAT3(g_sceneCenter.x + (cube == 0u ? -1.25f : 1.25f),
+                  g_particleFloorY + half + 0.02f, g_sceneCenter.z + 1.0f)
+            : XMFLOAT3(xDistribution(random),
+                  g_particleFloorY + half + 0.01f + heightDistribution(random),
+                  zDistribution(random));
 
         const uint32_t cubeVertexStart = static_cast<uint32_t>(vertices.size());
         for (UINT face = 0; face < 6; ++face)
@@ -836,6 +926,10 @@ void CreateCubes()
         material->UvScale = XMFLOAT2(1.f, 1.f);
         material->Ks = XMFLOAT3(0.12f, 0.12f, 0.12f);
         material->Ns = 24.f;
+        material->Metallic = cube == 0u ? 1.0f : 0.0f;
+        material->Roughness = cube < 2u ? 1.0f : 0.55f;
+        material->HasSpecularTex = cube == 0u ? 1u : 0u;
+        material->HasNormalTex = cube < 2u ? 1u : 0u;
     }
 
     const UINT vbSize = static_cast<UINT>(vertices.size() * sizeof(Obj::MeshVertex));
@@ -1012,14 +1106,21 @@ void DrawCubes(const XMMATRIX& viewProj)
     WriteFrameCBTo(g_cubeFrameCBMapped, XMMatrixIdentity(), viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(
         0, g_cubeFrameCBUpload->GetGPUVirtualAddress());
-    g_cmdList->SetGraphicsRootDescriptorTable(
-        2, g_srvHeap->GetGPUDescriptorHandleForHeapStart());
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_cubeVbv);
     g_cmdList->IASetIndexBuffer(&g_cubeIbv);
 
     for (UINT cube = 0; cube < kCubeCount; ++cube)
     {
+        UINT materialSrvBase = 0;
+        if (cube == 0u)
+            materialSrvBase = kCerberusMaterialSrvBase;
+        else if (cube == 1u)
+            materialSrvBase = kWoodMaterialSrvBase;
+        D3D12_GPU_DESCRIPTOR_HANDLE materialTable =
+            g_srvHeap->GetGPUDescriptorHandleForHeapStart();
+        materialTable.ptr += static_cast<SIZE_T>(materialSrvBase) * g_srvDescriptorSize;
+        g_cmdList->SetGraphicsRootDescriptorTable(2, materialTable);
         g_cmdList->SetGraphicsRootConstantBufferView(
             1, g_cubeMatCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(cube) * kCbAlign);
         g_cmdList->DrawIndexedInstanced(36, 1, cube * 36u, 0, 0);
@@ -1097,11 +1198,6 @@ void DrawFrame(float dt)
 
     gb.TransitionToShaderResource(g_cmdList.Get());
 
-    const D3D12_CPU_DESCRIPTOR_HANDLE sceneRtv = g_postProcessSys.BeginScene(g_cmdList.Get());
-    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
-    g_renderSys.DrawLightingPass(
-        g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, sceneRtv, g_width, g_height);
-
     ComPtr<ID3D12Resource> backBuffer = g_renderTargets[g_frameIndex];
     const D3D12_RESOURCE_STATES rtBefore =
         g_swapSeenPresent[g_frameIndex] ? D3D12_RESOURCE_STATE_PRESENT : D3D12_RESOURCE_STATE_COMMON;
@@ -1111,7 +1207,11 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    g_postProcessSys.Apply(g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height);
+    // PostProcessSystem remains initialized and compiled, but its Grayscale
+    // and Blur passes are intentionally bypassed for the PBR + IBL task.
+    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
+    g_renderSys.DrawLightingPass(
+        g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, rtv, g_width, g_height);
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1209,6 +1309,7 @@ void InitD3D(HWND hwnd)
         g_srvHeap.Get(),
         kDeferredSrvBase,
         kShadowSrvBase,
+        kIblSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
     g_shadowSys.Init(

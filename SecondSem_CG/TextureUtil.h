@@ -25,6 +25,18 @@ bool CreateSolidTexture2D(
     Microsoft::WRL::ComPtr<ID3D12Resource>& outTexture,
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>>& uploadKeep);
 
+bool CreateTexture2DFromRgba8(
+    ID3D12Device* device,
+    ID3D12GraphicsCommandList* cmdList,
+    ID3D12DescriptorHeap* srvHeap,
+    UINT heapIndex,
+    UINT descriptorIncrement,
+    UINT width,
+    UINT height,
+    const uint8_t* pixels,
+    Microsoft::WRL::ComPtr<ID3D12Resource>& outTexture,
+    std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>>& uploadKeep);
+
 bool CreateTexture2DFromFile(
     ID3D12Device* device,
     ID3D12GraphicsCommandList* cmdList,

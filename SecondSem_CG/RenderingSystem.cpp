@@ -100,7 +100,7 @@ static ComPtr<ID3D12Resource> CreateUploadCb(ID3D12Device* device, UINT64 size)
 void RenderingSystem::WriteDefaultLights()
 {
     LightingCBGPU cb{};
-    cb.lightCount = 1;
+    cb.lightCount = 3;
 
     XMVECTOR sund = XMVector3Normalize(XMVectorSet(0.42f, 0.72f, 0.52f, 0.f));
     cb.lights[0].type = LIGHT_DIR;
@@ -108,6 +108,16 @@ void RenderingSystem::WriteDefaultLights()
     cb.lights[0].direction_cosOuter.w = 0.f;
     cb.lights[0].color_intensity = XMFLOAT4(1.f, 0.96f, 0.88f, 1.35f);
     XMStoreFloat3(&m_sunDirection, sund);
+
+    cb.lights[1].type = LIGHT_POINT;
+    cb.lights[1].position_range = XMFLOAT4(-2.5f, 3.2f, 1.0f, 10.0f);
+    cb.lights[1].color_intensity = XMFLOAT4(1.0f, 0.22f, 0.08f, 32.0f);
+
+    cb.lights[2].type = LIGHT_SPOT;
+    cb.lights[2].position_range = XMFLOAT4(3.0f, 4.5f, -1.5f, 14.0f);
+    cb.lights[2].direction_cosOuter = XMFLOAT4(-0.42f, -0.82f, 0.38f, 0.78f);
+    cb.lights[2].spotCosInner = 0.91f;
+    cb.lights[2].color_intensity = XMFLOAT4(0.16f, 0.42f, 1.0f, 52.0f);
 
     std::memcpy(m_lightingCBMapped, &cb, sizeof(cb));
 }
@@ -125,7 +135,13 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
     ranges[1].BaseShaderRegister = 3;
     ranges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    D3D12_ROOT_PARAMETER params[3]{};
+    D3D12_DESCRIPTOR_RANGE environmentRange{};
+    environmentRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    environmentRange.NumDescriptors = 1;
+    environmentRange.BaseShaderRegister = 4;
+    environmentRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    D3D12_ROOT_PARAMETER params[4]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     params[0].Descriptor.ShaderRegister = 0;
     params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -139,7 +155,12 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
     params[2].DescriptorTable.pDescriptorRanges = ranges;
     params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-    D3D12_STATIC_SAMPLER_DESC samplers[2]{};
+    params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    params[3].DescriptorTable.NumDescriptorRanges = 1;
+    params[3].DescriptorTable.pDescriptorRanges = &environmentRange;
+    params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+    D3D12_STATIC_SAMPLER_DESC samplers[3]{};
     samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -156,10 +177,18 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
     samplers[1].ShaderRegister = 1;
     samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    samplers[2].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    samplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    samplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    samplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+    samplers[2].ShaderRegister = 2;
+    samplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC rs{};
-    rs.NumParameters = 3;
+    rs.NumParameters = 4;
     rs.pParameters = params;
-    rs.NumStaticSamplers = 2;
+    rs.NumStaticSamplers = 3;
     rs.pStaticSamplers = samplers;
     rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -204,11 +233,13 @@ void RenderingSystem::Init(
     ID3D12DescriptorHeap* shaderVisibleSrvHeap,
     UINT gbufferSrvStartIndex,
     UINT shadowSrvStartIndex,
+    UINT iblSrvIndex,
     UINT srvDescriptorIncrement,
     const wchar_t* deferredHlslPath)
 {
     m_gbufferSrvBase = gbufferSrvStartIndex;
     m_shadowSrvBase = shadowSrvStartIndex;
+    m_iblSrvIndex = iblSrvIndex;
     m_srvDescriptorIncrement = srvDescriptorIncrement;
 
     m_gbuffer.Init(device, width, height);
@@ -268,6 +299,11 @@ void RenderingSystem::DrawLightingPass(
     D3D12_GPU_DESCRIPTOR_HANDLE table = srvHeapShaderVisible->GetGPUDescriptorHandleForHeapStart();
     table.ptr += static_cast<SIZE_T>(m_gbufferSrvBase) * static_cast<SIZE_T>(m_srvDescriptorIncrement);
     cmd->SetGraphicsRootDescriptorTable(2, table);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE environment =
+        srvHeapShaderVisible->GetGPUDescriptorHandleForHeapStart();
+    environment.ptr += static_cast<SIZE_T>(m_iblSrvIndex) * m_srvDescriptorIncrement;
+    cmd->SetGraphicsRootDescriptorTable(3, environment);
 
     cmd->OMSetRenderTargets(1, &backbufferRtv, FALSE, nullptr);
 

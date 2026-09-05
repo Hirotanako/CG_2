@@ -136,8 +136,8 @@ ParticleGBufferOut ParticlePS(ParticleGsOut input)
     // and also write depth through the opaque particle PSO.
     clip(1.0 - dot(input.uv * 2.0 - 1.0, input.uv * 2.0 - 1.0));
     ParticleGBufferOut output;
-    output.albedo = float4(input.color.rgb, 1.0);
-    output.normal = float4(normalize(input.normal), 0.0);
+    output.albedo = float4(input.color.rgb, 0.0); // dielectric metallic value
+    output.normal = float4(normalize(input.normal), 0.65); // PBR roughness
     output.position = float4(input.worldPosition, 1.0);
     return output;
 }

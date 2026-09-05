@@ -561,6 +561,50 @@ bool CreateSolidTexture2D(
     return true;
 }
 
+bool CreateTexture2DFromRgba8(
+    ID3D12Device* device,
+    ID3D12GraphicsCommandList* cmdList,
+    ID3D12DescriptorHeap* srvHeap,
+    UINT heapIndex,
+    UINT descriptorIncrement,
+    UINT width,
+    UINT height,
+    const uint8_t* pixels,
+    ComPtr<ID3D12Resource>& outTexture,
+    std::vector<ComPtr<ID3D12Resource>>& uploadKeep)
+{
+    outTexture.Reset();
+    if (width == 0 || height == 0 || pixels == nullptr)
+        return false;
+
+    D3D12_HEAP_PROPERTIES hp{};
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC rd{};
+    rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Width = width;
+    rd.Height = height;
+    rd.DepthOrArraySize = 1;
+    rd.MipLevels = 1;
+    rd.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rd.SampleDesc.Count = 1;
+
+    HRESULT hr = device->CreateCommittedResource(
+        &hp, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr, IID_PPV_ARGS(&outTexture));
+    if (FAILED(hr))
+        return false;
+
+    if (!CopyBufferToTexture(
+            device, cmdList, outTexture.Get(), rd, pixels, width * 4u, uploadKeep))
+        return false;
+
+    AppendTransition(
+        cmdList, outTexture.Get(), D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    CreateSrv(device, outTexture.Get(), srvHeap, heapIndex, descriptorIncrement);
+    return true;
+}
+
 bool CreateTexture2DFromFile(
     ID3D12Device* device,
     ID3D12GraphicsCommandList* cmdList,
