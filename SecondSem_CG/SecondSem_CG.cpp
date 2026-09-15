@@ -50,9 +50,10 @@ constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
 constexpr UINT kDeferredSrvBase = 400;
 constexpr UINT kShadowSrvBase = 403;
-constexpr UINT kParticleSrvBase = 404;
+constexpr UINT kParticleSrvBase = 420;
 constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kIblSrvBase = 410;
+constexpr bool kPostProcessEnabled = false;
 constexpr UINT kCerberusMaterialSrvBase = 380;
 constexpr UINT kWoodMaterialSrvBase = 384;
 constexpr UINT kCbAlign = 256;
@@ -313,7 +314,8 @@ void ResizeSwapChain(UINT w, UINT h)
     {
         g_renderSys.Resize(
             g_device.Get(), w, h, g_srvHeap.Get(), g_srvDescriptorSize);
-        g_postProcessSys.Resize(g_device.Get(), w, h, g_srvHeap.Get());
+        if (kPostProcessEnabled)
+            g_postProcessSys.Resize(g_device.Get(), w, h, g_srvHeap.Get());
     }
 }
 
@@ -1318,9 +1320,14 @@ void InitD3D(HWND hwnd)
         kShadowSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
-    g_postProcessSys.Init(
-        g_device.Get(), g_width, g_height, g_srvHeap.Get(), kPostProcessSrvBase,
-        g_srvDescriptorSize, PostProcessShaderPath().c_str());
+    // Keep the complete post-process implementation in the project, but do
+    // not initialize or run any of its passes while the feature is disabled.
+    if (kPostProcessEnabled)
+    {
+        g_postProcessSys.Init(
+            g_device.Get(), g_width, g_height, g_srvHeap.Get(), kPostProcessSrvBase,
+            g_srvDescriptorSize, PostProcessShaderPath().c_str());
+    }
     LoadScene();
     CreateCubes();
 

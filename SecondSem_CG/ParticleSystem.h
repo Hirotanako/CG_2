@@ -12,8 +12,12 @@
 class ParticleSystem
 {
 public:
-    static constexpr UINT kParticleCount = 2048;
-    static constexpr UINT kDescriptorCount = 4;
+    static constexpr UINT kDirectionCount = 4;
+    static constexpr UINT kParticlesPerDirection = 512;
+    static constexpr UINT kParticleCount = kDirectionCount * kParticlesPerDirection;
+    // Every directional stream owns two UAVs for Consume/Append ping-pong and
+    // two matching SRVs used to draw the current buffer.
+    static constexpr UINT kDescriptorCount = kDirectionCount * 4;
 
     void Init(
         ID3D12Device* device,
@@ -51,16 +55,16 @@ private:
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_renderRootSignature;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_renderPso;
 
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_particles[2];
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_counters[2];
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_initialParticlesUpload;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_particles[kDirectionCount][2];
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_counters[kDirectionCount][2];
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_initialParticlesUpload[kDirectionCount];
     Microsoft::WRL::ComPtr<ID3D12Resource> m_initialCountersUpload;
     static constexpr UINT kFrameCount = 2;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_constants[kFrameCount];
-    std::uint8_t* m_constantsMapped[kFrameCount]{};
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_constants[kFrameCount][kDirectionCount];
+    std::uint8_t* m_constantsMapped[kFrameCount][kDirectionCount]{};
 
     UINT m_descriptorBase = 0;
     UINT m_descriptorIncrement = 0;
-    UINT m_currentBuffer = 0;
-    bool m_firstUpdate = true;
+    UINT m_currentBuffer[kDirectionCount]{};
+    bool m_firstUpdate[kDirectionCount]{true, true, true, true};
 };

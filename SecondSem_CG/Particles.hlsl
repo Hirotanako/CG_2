@@ -38,7 +38,7 @@ float Hash(uint value)
 [numthreads(64, 1, 1)]
 void ParticleUpdateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    if (dispatchThreadId.x >= 2048)
+    if (dispatchThreadId.x >= 512)
         return;
 
     Particle p = ParticlesToUpdate.Consume();
@@ -48,24 +48,32 @@ void ParticleUpdateCS(uint3 dispatchThreadId : SV_DispatchThreadID)
     if (p.age >= p.lifetime)
     {
         const uint seed = dispatchThreadId.x + (uint)(TimeAndSize.x * 1000.0);
-        const float angle = Hash(seed * 3 + 1) * 6.2831853;
-        const float radius = sqrt(Hash(seed * 3 + 2)) * 0.22;
-        const float speed = 0.85 + Hash(seed * 3 + 3) * 0.75;
-        p.position = float3(
-            EmitterAndDeltaTime.x + cos(angle) * radius,
-            EmitterAndDeltaTime.y,
-            EmitterAndDeltaTime.z + sin(angle) * radius);
-        p.velocity = float3(-cos(angle) * 0.12, -speed, -sin(angle) * 0.12);
+        const float speed = 0.75 + Hash(seed * 3 + 3) * 0.65;
+        const float sideDrift = (Hash(seed + 57) - 0.5) * 0.12;
+        const float depthDrift = (Hash(seed + 73) - 0.5) * 0.10;
+        const uint direction = (uint)TimeAndSize.z;
+        p.position = EmitterAndDeltaTime.xyz;
+        if (direction == 0)
+            p.velocity = float3(sideDrift, speed, depthDrift);
+        else if (direction == 1)
+            p.velocity = float3(sideDrift, -speed, depthDrift);
+        else if (direction == 2)
+            p.velocity = float3(-speed, sideDrift, depthDrift);
+        else
+            p.velocity = float3(speed, sideDrift, depthDrift);
         p.age = 0.0;
         p.lifetime = 2.4 + Hash(seed + 17) * 1.2;
         const float tint = Hash(seed + 31);
-        p.color = float4(1.0, 0.25 + tint * 0.45, 0.04, 1.0);
+        p.color = float4(0.72 + tint * 0.20, 0.90 + tint * 0.08, 1.0, 1.0);
     }
     else
     {
-        // The complete trajectory is inverted: initial velocity and
-        // acceleration both point toward negative Y.
-        p.velocity.y -= TimeAndSize.w * dt;
+        const uint direction = (uint)TimeAndSize.z;
+        const float2 directionXY[4] = {
+            float2(0.0, 1.0), float2(0.0, -1.0),
+            float2(-1.0, 0.0), float2(1.0, 0.0)
+        };
+        p.velocity.xy += directionXY[direction] * TimeAndSize.w * dt;
         p.position += p.velocity * dt;
     }
 
@@ -132,9 +140,27 @@ struct ParticleGBufferOut
 
 ParticleGBufferOut ParticlePS(ParticleGsOut input)
 {
-    // A hard edge is still opaque: surviving samples always write alpha = 1
-    // and also write depth through the opaque particle PSO.
-    clip(1.0 - dot(input.uv * 2.0 - 1.0, input.uv * 2.0 - 1.0));
+    const float2 p = input.uv * 2.0 - 1.0;
+    clip(1.0 - dot(p, p));
+
+    // Eight radial triangular cut-outs turn the circular billboard into a
+    // stylized snowflake while keeping its outside contour round.
+    [unroll]
+    for (uint hole = 0; hole < 8; ++hole)
+    {
+        const float angle = (hole + 0.5) * 0.785398163;
+        const float2 radial = float2(cos(angle), sin(angle));
+        const float2 tangent = float2(-radial.y, radial.x);
+        const float2 a = radial * 0.30;
+        const float2 b = radial * 0.72 + tangent * 0.13;
+        const float2 c = radial * 0.72 - tangent * 0.13;
+        const float sideAB = cross(float3(b - a, 0.0), float3(p - a, 0.0)).z;
+        const float sideBC = cross(float3(c - b, 0.0), float3(p - b, 0.0)).z;
+        const float sideCA = cross(float3(a - c, 0.0), float3(p - c, 0.0)).z;
+        if ((sideAB >= 0.0 && sideBC >= 0.0 && sideCA >= 0.0) ||
+            (sideAB <= 0.0 && sideBC <= 0.0 && sideCA <= 0.0))
+            clip(-1.0);
+    }
     ParticleGBufferOut output;
     output.albedo = float4(input.color.rgb, 0.0); // dielectric metallic value
     output.normal = float4(normalize(input.normal), 0.65); // PBR roughness

@@ -224,97 +224,120 @@ void ParticleSystem::CreatePipelines(ID3D12Device* device, const wchar_t* shader
 void ParticleSystem::CreateBuffers(
     ID3D12Device* device, ID3D12GraphicsCommandList* cmd, const XMFLOAT3& emitterPosition)
 {
-    const UINT64 particleBytes = static_cast<UINT64>(kParticleCount) * sizeof(ParticleGpu);
-    for (UINT i = 0; i < 2; ++i)
+    const UINT64 particleBytes = static_cast<UINT64>(kParticlesPerDirection) * sizeof(ParticleGpu);
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
     {
-        m_particles[i] = MakeBuffer(device, particleBytes, D3D12_HEAP_TYPE_DEFAULT,
-            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
-        m_counters[i] = MakeBuffer(device, sizeof(UINT), D3D12_HEAP_TYPE_DEFAULT,
-            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        for (UINT pingPong = 0; pingPong < 2; ++pingPong)
+        {
+            m_particles[direction][pingPong] = MakeBuffer(device, particleBytes, D3D12_HEAP_TYPE_DEFAULT,
+                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+            m_counters[direction][pingPong] = MakeBuffer(device, sizeof(UINT), D3D12_HEAP_TYPE_DEFAULT,
+                D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COPY_DEST);
+        }
+
+        std::vector<ParticleGpu> particles(kParticlesPerDirection);
+        for (UINT i = 0; i < kParticlesPerDirection; ++i)
+        {
+            const UINT seed = direction * kParticlesPerDirection + i;
+            const float speed = 0.75f + Hash01(seed * 3u + 3u) * 0.65f;
+            const float lifetime = 2.4f + Hash01(seed + 131u) * 1.2f;
+            ParticleGpu& p = particles[i];
+            // All four streams are born at exactly the same emitter point.
+            p.position = emitterPosition;
+            p.age = 0.0f;
+            const float sideDrift = (Hash01(seed + 57u) - 0.5f) * 0.12f;
+            const float depthDrift = (Hash01(seed + 73u) - 0.5f) * 0.10f;
+            switch (direction)
+            {
+            case 0: p.velocity = XMFLOAT3(sideDrift, speed, depthDrift); break;  // up
+            case 1: p.velocity = XMFLOAT3(sideDrift, -speed, depthDrift); break; // down
+            case 2: p.velocity = XMFLOAT3(-speed, sideDrift, depthDrift); break; // left
+            default: p.velocity = XMFLOAT3(speed, sideDrift, depthDrift); break; // right
+            }
+            p.lifetime = lifetime;
+            const float tint = Hash01(seed + 171u);
+            p.color = XMFLOAT4(0.72f + tint * 0.20f, 0.90f + tint * 0.08f, 1.0f, 1.0f);
+        }
+
+        m_initialParticlesUpload[direction] = MakeBuffer(device, particleBytes, D3D12_HEAP_TYPE_UPLOAD,
+            D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
+        void* mapped = nullptr;
+        D3D12_RANGE noRead{0, 0};
+        Check(m_initialParticlesUpload[direction]->Map(0, &noRead, &mapped), L"Particle upload map");
+        std::memcpy(mapped, particles.data(), static_cast<size_t>(particleBytes));
+        m_initialParticlesUpload[direction]->Unmap(0, nullptr);
     }
 
-    std::vector<ParticleGpu> particles(kParticleCount);
-    for (UINT i = 0; i < kParticleCount; ++i)
-    {
-        const float angle = Hash01(i * 3u + 1u) * XM_2PI;
-        const float radius = std::sqrt(Hash01(i * 3u + 2u)) * 0.22f;
-        const float speed = 0.85f + Hash01(i * 3u + 3u) * 0.75f;
-        const float lifetime = 2.4f + Hash01(i + 131u) * 1.2f;
-        const float age = Hash01(i + 91u) * lifetime;
-        constexpr float accelerationMagnitude = 0.18f;
-        ParticleGpu& p = particles[i];
-        p.position = XMFLOAT3(
-            emitterPosition.x - std::cos(angle) * (radius + 0.12f * age),
-            emitterPosition.y - speed * age - 0.5f * accelerationMagnitude * age * age,
-            emitterPosition.z - std::sin(angle) * (radius + 0.12f * age));
-        p.age = age;
-        p.velocity = XMFLOAT3(
-            -std::cos(angle) * 0.12f, -speed - accelerationMagnitude * age,
-            -std::sin(angle) * 0.12f);
-        p.lifetime = lifetime;
-        const float tint = Hash01(i + 171u);
-        p.color = XMFLOAT4(1.0f, 0.25f + tint * 0.45f, 0.04f, 1.0f);
-    }
-
-    m_initialParticlesUpload = MakeBuffer(device, particleBytes, D3D12_HEAP_TYPE_UPLOAD,
+    UINT initialCounters[kDirectionCount * 2]{};
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
+        initialCounters[direction * 2] = kParticlesPerDirection;
+    m_initialCountersUpload = MakeBuffer(device, sizeof(initialCounters), D3D12_HEAP_TYPE_UPLOAD,
         D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
     void* mapped = nullptr;
     D3D12_RANGE noRead{0, 0};
-    Check(m_initialParticlesUpload->Map(0, &noRead, &mapped), L"Particle upload map");
-    std::memcpy(mapped, particles.data(), static_cast<size_t>(particleBytes));
-    m_initialParticlesUpload->Unmap(0, nullptr);
-
-    const UINT initialCounters[2] = {kParticleCount, 0};
-    m_initialCountersUpload = MakeBuffer(device, sizeof(initialCounters), D3D12_HEAP_TYPE_UPLOAD,
-        D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
     Check(m_initialCountersUpload->Map(0, &noRead, &mapped), L"Counter upload map");
     std::memcpy(mapped, initialCounters, sizeof(initialCounters));
     m_initialCountersUpload->Unmap(0, nullptr);
 
-    cmd->CopyBufferRegion(m_particles[0].Get(), 0, m_initialParticlesUpload.Get(), 0, particleBytes);
-    cmd->CopyBufferRegion(m_counters[0].Get(), 0, m_initialCountersUpload.Get(), 0, sizeof(UINT));
-    cmd->CopyBufferRegion(m_counters[1].Get(), 0, m_initialCountersUpload.Get(), sizeof(UINT), sizeof(UINT));
-    D3D12_RESOURCE_BARRIER barriers[4] = {
-        Transition(m_particles[0].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        Transition(m_particles[1].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        Transition(m_counters[0].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-        Transition(m_counters[1].Get(), D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
-    };
-    cmd->ResourceBarrier(_countof(barriers), barriers);
+    D3D12_RESOURCE_BARRIER barriers[kDirectionCount * 4]{};
+    UINT barrierIndex = 0;
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
+    {
+        cmd->CopyBufferRegion(m_particles[direction][0].Get(), 0,
+            m_initialParticlesUpload[direction].Get(), 0, particleBytes);
+        for (UINT pingPong = 0; pingPong < 2; ++pingPong)
+        {
+            cmd->CopyBufferRegion(m_counters[direction][pingPong].Get(), 0,
+                m_initialCountersUpload.Get(), (direction * 2 + pingPong) * sizeof(UINT), sizeof(UINT));
+            barriers[barrierIndex++] = Transition(m_particles[direction][pingPong].Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            barriers[barrierIndex++] = Transition(m_counters[direction][pingPong].Get(),
+                D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+    }
+    cmd->ResourceBarrier(barrierIndex, barriers);
 
     for (UINT frame = 0; frame < kFrameCount; ++frame)
     {
-        m_constants[frame] = MakeBuffer(device, sizeof(ParticleConstantsGpu), D3D12_HEAP_TYPE_UPLOAD,
-            D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
-        Check(m_constants[frame]->Map(
-            0, &noRead, reinterpret_cast<void**>(&m_constantsMapped[frame])), L"Particle constants map");
+        for (UINT direction = 0; direction < kDirectionCount; ++direction)
+        {
+            m_constants[frame][direction] = MakeBuffer(device, sizeof(ParticleConstantsGpu), D3D12_HEAP_TYPE_UPLOAD,
+                D3D12_RESOURCE_FLAG_NONE, D3D12_RESOURCE_STATE_GENERIC_READ);
+            Check(m_constants[frame][direction]->Map(0, &noRead,
+                reinterpret_cast<void**>(&m_constantsMapped[frame][direction])), L"Particle constants map");
+        }
     }
 }
 
 void ParticleSystem::CreateDescriptors(ID3D12Device* device, ID3D12DescriptorHeap* heap)
 {
     const D3D12_CPU_DESCRIPTOR_HANDLE start = heap->GetCPUDescriptorHandleForHeapStart();
-    for (UINT i = 0; i < 2; ++i)
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
     {
-        D3D12_CPU_DESCRIPTOR_HANDLE handle = start;
-        handle.ptr += static_cast<SIZE_T>(m_descriptorBase + i) * m_descriptorIncrement;
-        D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
-        uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
-        uav.Format = DXGI_FORMAT_UNKNOWN;
-        uav.Buffer.NumElements = kParticleCount;
-        uav.Buffer.StructureByteStride = sizeof(ParticleGpu);
-        uav.Buffer.CounterOffsetInBytes = 0;
-        device->CreateUnorderedAccessView(m_particles[i].Get(), m_counters[i].Get(), &uav, handle);
+        const UINT streamBase = m_descriptorBase + direction * 4;
+        for (UINT pingPong = 0; pingPong < 2; ++pingPong)
+        {
+            D3D12_CPU_DESCRIPTOR_HANDLE handle = start;
+            handle.ptr += static_cast<SIZE_T>(streamBase + pingPong) * m_descriptorIncrement;
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav{};
+            uav.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+            uav.Format = DXGI_FORMAT_UNKNOWN;
+            uav.Buffer.NumElements = kParticlesPerDirection;
+            uav.Buffer.StructureByteStride = sizeof(ParticleGpu);
+            uav.Buffer.CounterOffsetInBytes = 0;
+            device->CreateUnorderedAccessView(
+                m_particles[direction][pingPong].Get(), m_counters[direction][pingPong].Get(), &uav, handle);
 
-        handle = start;
-        handle.ptr += static_cast<SIZE_T>(m_descriptorBase + 2 + i) * m_descriptorIncrement;
-        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
-        srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        srv.Format = DXGI_FORMAT_UNKNOWN;
-        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        srv.Buffer.NumElements = kParticleCount;
-        srv.Buffer.StructureByteStride = sizeof(ParticleGpu);
-        device->CreateShaderResourceView(m_particles[i].Get(), &srv, handle);
+            handle = start;
+            handle.ptr += static_cast<SIZE_T>(streamBase + 2 + pingPong) * m_descriptorIncrement;
+            D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+            srv.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            srv.Format = DXGI_FORMAT_UNKNOWN;
+            srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srv.Buffer.NumElements = kParticlesPerDirection;
+            srv.Buffer.StructureByteStride = sizeof(ParticleGpu);
+            device->CreateShaderResourceView(m_particles[direction][pingPong].Get(), &srv, handle);
+        }
     }
 }
 
@@ -356,59 +379,68 @@ void ParticleSystem::UpdateAndDraw(
     constants.cameraPosition = XMFLOAT4(cameraPosition.x, cameraPosition.y, cameraPosition.z, 1.0f);
     constants.emitterAndDeltaTime = XMFLOAT4(
         emitterPosition.x, emitterPosition.y, emitterPosition.z, deltaTime);
-    constants.timeAndSize = XMFLOAT4(totalTime, 0.075f, floorHeight, 0.18f);
-    std::memcpy(m_constantsMapped[frameIndex], &constants, sizeof(constants));
-
-    const UINT outputBuffer = 1u - m_currentBuffer;
-    if (!m_firstUpdate)
-    {
-        const D3D12_RESOURCE_BARRIER toUav = Transition(
-            m_particles[m_currentBuffer].Get(),
-            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        cmd->ResourceBarrier(1, &toUav);
-    }
+    // Smaller billboard size than the old circular particles.
+    constants.timeAndSize = XMFLOAT4(totalTime, 0.052f, floorHeight, 0.10f);
 
     ID3D12DescriptorHeap* heaps[] = {shaderVisibleHeap};
     cmd->SetDescriptorHeaps(1, heaps);
-    cmd->SetComputeRootSignature(m_computeRootSignature.Get());
-    cmd->SetPipelineState(m_computePso.Get());
-    cmd->SetComputeRootConstantBufferView(0, m_constants[frameIndex]->GetGPUVirtualAddress());
-
     D3D12_GPU_DESCRIPTOR_HANDLE gpu = shaderVisibleHeap->GetGPUDescriptorHandleForHeapStart();
-    D3D12_GPU_DESCRIPTOR_HANDLE input = gpu;
-    input.ptr += static_cast<SIZE_T>(m_descriptorBase + m_currentBuffer) * m_descriptorIncrement;
-    D3D12_GPU_DESCRIPTOR_HANDLE output = gpu;
-    output.ptr += static_cast<SIZE_T>(m_descriptorBase + outputBuffer) * m_descriptorIncrement;
-    cmd->SetComputeRootDescriptorTable(1, input);
-    cmd->SetComputeRootDescriptorTable(2, output);
-    cmd->Dispatch((kParticleCount + 63u) / 64u, 1, 1);
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
+    {
+        constants.timeAndSize.z = static_cast<float>(direction);
+        std::memcpy(m_constantsMapped[frameIndex][direction], &constants, sizeof(constants));
 
-    D3D12_RESOURCE_BARRIER afterCompute[2] = {
-        UavBarrier(m_particles[outputBuffer].Get()),
-        Transition(m_particles[outputBuffer].Get(),
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
-    };
-    cmd->ResourceBarrier(_countof(afterCompute), afterCompute);
-    m_currentBuffer = outputBuffer;
-    m_firstUpdate = false;
+        const UINT outputBuffer = 1u - m_currentBuffer[direction];
+        if (!m_firstUpdate[direction])
+        {
+            const D3D12_RESOURCE_BARRIER toUav = Transition(
+                m_particles[direction][m_currentBuffer[direction]].Get(),
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            cmd->ResourceBarrier(1, &toUav);
+        }
 
-    cmd->SetGraphicsRootSignature(m_renderRootSignature.Get());
-    cmd->SetPipelineState(m_renderPso.Get());
-    cmd->SetGraphicsRootConstantBufferView(0, m_constants[frameIndex]->GetGPUVirtualAddress());
-    D3D12_GPU_DESCRIPTOR_HANDLE particleSrv = gpu;
-    particleSrv.ptr += static_cast<SIZE_T>(m_descriptorBase + 2 + m_currentBuffer) * m_descriptorIncrement;
-    cmd->SetGraphicsRootDescriptorTable(1, particleSrv);
-    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
-    cmd->IASetVertexBuffers(0, 0, nullptr);
-    cmd->IASetIndexBuffer(nullptr);
-    cmd->DrawInstanced(kParticleCount, 1, 0, 0);
+        cmd->SetComputeRootSignature(m_computeRootSignature.Get());
+        cmd->SetPipelineState(m_computePso.Get());
+        cmd->SetComputeRootConstantBufferView(
+            0, m_constants[frameIndex][direction]->GetGPUVirtualAddress());
+        const UINT streamBase = m_descriptorBase + direction * 4;
+        D3D12_GPU_DESCRIPTOR_HANDLE input = gpu;
+        input.ptr += static_cast<SIZE_T>(streamBase + m_currentBuffer[direction]) * m_descriptorIncrement;
+        D3D12_GPU_DESCRIPTOR_HANDLE output = gpu;
+        output.ptr += static_cast<SIZE_T>(streamBase + outputBuffer) * m_descriptorIncrement;
+        cmd->SetComputeRootDescriptorTable(1, input);
+        cmd->SetComputeRootDescriptorTable(2, output);
+        cmd->Dispatch((kParticlesPerDirection + 63u) / 64u, 1, 1);
+
+        D3D12_RESOURCE_BARRIER afterCompute[2] = {
+            UavBarrier(m_particles[direction][outputBuffer].Get()),
+            Transition(m_particles[direction][outputBuffer].Get(),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE),
+        };
+        cmd->ResourceBarrier(_countof(afterCompute), afterCompute);
+        m_currentBuffer[direction] = outputBuffer;
+        m_firstUpdate[direction] = false;
+
+        cmd->SetGraphicsRootSignature(m_renderRootSignature.Get());
+        cmd->SetPipelineState(m_renderPso.Get());
+        cmd->SetGraphicsRootConstantBufferView(
+            0, m_constants[frameIndex][direction]->GetGPUVirtualAddress());
+        D3D12_GPU_DESCRIPTOR_HANDLE particleSrv = gpu;
+        particleSrv.ptr += static_cast<SIZE_T>(streamBase + 2 + m_currentBuffer[direction]) * m_descriptorIncrement;
+        cmd->SetGraphicsRootDescriptorTable(1, particleSrv);
+        cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_POINTLIST);
+        cmd->IASetVertexBuffers(0, 0, nullptr);
+        cmd->IASetIndexBuffer(nullptr);
+        cmd->DrawInstanced(kParticlesPerDirection, 1, 0, 0);
+    }
 }
 
 void ParticleSystem::ReleaseUploadResources()
 {
     // InitD3D calls this only after ExecuteCommandList has waited for the GPU.
-    m_initialParticlesUpload.Reset();
+    for (UINT direction = 0; direction < kDirectionCount; ++direction)
+        m_initialParticlesUpload[direction].Reset();
     m_initialCountersUpload.Reset();
 }
