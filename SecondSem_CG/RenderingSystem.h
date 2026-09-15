@@ -34,6 +34,7 @@ public:
         UINT srvDescriptorIncrement);
 
     void UploadFrameConstants(
+        UINT frameIndex,
         const DirectX::XMFLOAT3& cameraPos,
         UINT screenW,
         UINT screenH);
@@ -58,8 +59,10 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_rootSigLight;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoLight;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_lightingCB;
-    uint8_t* m_lightingCBMapped = nullptr;
+    static constexpr UINT kFrameCount = 2;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_lightingCB[kFrameCount];
+    uint8_t* m_lightingCBMapped[kFrameCount]{};
+    UINT m_currentFrame = 0;
 
     UINT m_gbufferSrvBase = 0;
     UINT m_shadowSrvBase = 0;

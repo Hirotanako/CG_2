@@ -119,7 +119,8 @@ void RenderingSystem::WriteDefaultLights()
     cb.lights[2].spotCosInner = 0.91f;
     cb.lights[2].color_intensity = XMFLOAT4(0.16f, 0.42f, 1.0f, 52.0f);
 
-    std::memcpy(m_lightingCBMapped, &cb, sizeof(cb));
+    for (UINT frame = 0; frame < kFrameCount; ++frame)
+        std::memcpy(m_lightingCBMapped[frame], &cb, sizeof(cb));
 }
 
 void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t* hlslPath)
@@ -135,11 +136,12 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
     ranges[1].BaseShaderRegister = 3;
     ranges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-    D3D12_DESCRIPTOR_RANGE environmentRange{};
-    environmentRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    environmentRange.NumDescriptors = 1;
-    environmentRange.BaseShaderRegister = 4;
-    environmentRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    D3D12_DESCRIPTOR_RANGE lightingImagesRange{};
+    lightingImagesRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    // t4 = environment map, t5 = image shown inside the soft shadow.
+    lightingImagesRange.NumDescriptors = 2;
+    lightingImagesRange.BaseShaderRegister = 4;
+    lightingImagesRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
     D3D12_ROOT_PARAMETER params[4]{};
     params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -157,7 +159,7 @@ void RenderingSystem::CreateLightingPipeline(ID3D12Device* device, const wchar_t
 
     params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
     params[3].DescriptorTable.NumDescriptorRanges = 1;
-    params[3].DescriptorTable.pDescriptorRanges = &environmentRange;
+    params[3].DescriptorTable.pDescriptorRanges = &lightingImagesRange;
     params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_STATIC_SAMPLER_DESC samplers[3]{};
@@ -248,11 +250,15 @@ void RenderingSystem::Init(
 
     CreateLightingPipeline(device, deferredHlslPath);
 
-    m_lightingCB = CreateUploadCb(device, sizeof(LightingCBGPU));
     D3D12_RANGE rr{0, 0};
-    HRESULT hr = m_lightingCB->Map(0, &rr, reinterpret_cast<void**>(&m_lightingCBMapped));
-    if (FAILED(hr))
-        std::exit(static_cast<int>(hr));
+    for (UINT frame = 0; frame < kFrameCount; ++frame)
+    {
+        m_lightingCB[frame] = CreateUploadCb(device, sizeof(LightingCBGPU));
+        const HRESULT hr = m_lightingCB[frame]->Map(
+            0, &rr, reinterpret_cast<void**>(&m_lightingCBMapped[frame]));
+        if (FAILED(hr))
+            std::exit(static_cast<int>(hr));
+    }
 
     WriteDefaultLights();
 }
@@ -270,9 +276,11 @@ void RenderingSystem::Resize(
         device, shaderVisibleSrvHeap, m_gbufferSrvBase, srvDescriptorIncrement);
 }
 
-void RenderingSystem::UploadFrameConstants(const XMFLOAT3& cameraPos, UINT screenW, UINT screenH)
+void RenderingSystem::UploadFrameConstants(
+    UINT frameIndex, const XMFLOAT3& cameraPos, UINT screenW, UINT screenH)
 {
-    auto* cb = reinterpret_cast<LightingCBGPU*>(m_lightingCBMapped);
+    m_currentFrame = frameIndex % kFrameCount;
+    auto* cb = reinterpret_cast<LightingCBGPU*>(m_lightingCBMapped[m_currentFrame]);
     cb->cameraPos_pad = XMFLOAT4(cameraPos.x, cameraPos.y, cameraPos.z, 0.f);
     const float iw = screenW > 0 ? 1.f / static_cast<float>(screenW) : 1.f;
     const float ih = screenH > 0 ? 1.f / static_cast<float>(screenH) : 1.f;
@@ -293,7 +301,8 @@ void RenderingSystem::DrawLightingPass(
     cmd->SetGraphicsRootSignature(m_rootSigLight.Get());
     cmd->SetPipelineState(m_psoLight.Get());
 
-    cmd->SetGraphicsRootConstantBufferView(0, m_lightingCB->GetGPUVirtualAddress());
+    cmd->SetGraphicsRootConstantBufferView(
+        0, m_lightingCB[m_currentFrame]->GetGPUVirtualAddress());
     cmd->SetGraphicsRootConstantBufferView(1, shadows.ShadowCBAddress());
 
     D3D12_GPU_DESCRIPTOR_HANDLE table = srvHeapShaderVisible->GetGPUDescriptorHandleForHeapStart();

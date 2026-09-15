@@ -79,7 +79,10 @@ GeoVsOut GeometryVS(GeoVsIn input)
 GeoVsOut ShadowVS(GeoVsIn input)
 {
     GeoVsOut o;
-    float4 wpos = mul(float4(input.pos, 1.0f), World);
+    float3 posL = input.pos;
+    if (UseSwayAnim != 0)
+        posL = ApplyCurtainSway(posL);
+    float4 wpos = mul(float4(posL, 1.0f), World);
     o.clipPos = mul(wpos, ViewProj);
     o.nrmW = float3(0, 0, 0);
     o.posW = wpos.xyz;
@@ -135,6 +138,7 @@ Texture2D GNormal : register(t1);
 Texture2D GPos : register(t2);
 Texture2DArray ShadowMap : register(t3);
 Texture2D EnvironmentMap : register(t4);
+Texture2D ShadowOverlayMap : register(t5);
 SamplerState GSamp : register(s0);
 SamplerComparisonState ShadowSamp : register(s1);
 SamplerState EnvironmentSamp : register(s2);
@@ -144,6 +148,7 @@ SamplerState EnvironmentSamp : register(s2);
 #define LIGHT_SPOT 2
 #define MAX_LIGHTS 8
 #define MAX_CASCADES 4
+#define SHADOW_OVERLAY_ENABLED 1
 
 struct GpuLight
 {
@@ -198,16 +203,12 @@ uint SelectCascade(float viewDepth)
     return 3;
 }
 
-float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
+float SampleShadowCascade(float3 samplePos, float3 N, float3 Ldir, uint cascade)
 {
-    float3 samplePos = worldPos + N * ShadowParams.z;
-
-    float viewDepth = mul(float4(samplePos, 1.f), CameraView).z;
-    uint cascade = SelectCascade(viewDepth);
-
     float4 clip = mul(float4(samplePos, 1.f), LightViewProj[cascade]);
     float3 ndc = clip.xyz / clip.w;
-    if (ndc.x < -1.f || ndc.x > 1.f || ndc.y < -1.f || ndc.y > 1.f)
+    if (ndc.x < -1.f || ndc.x > 1.f || ndc.y < -1.f || ndc.y > 1.f ||
+        ndc.z <= 0.f || ndc.z >= 1.f)
         return 1.f;
 
     float2 uv = ndc.xy * 0.5f + 0.5f;
@@ -216,26 +217,49 @@ float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
 
     float ndotl = saturate(dot(N, Ldir));
     float slope = sqrt(1.f - ndotl * ndotl) / max(ndotl, 0.08f);
-    float bias = ShadowParams.y + ShadowParams.w * slope;
+    float bias = ShadowParams.y + min(ShadowParams.w * slope, 0.004f);
 
-    float texel = ShadowParams.x;
+    float texel = ShadowParams.x * 1.25f;
     float shadow = 0.f;
 
     [unroll]
-    for (int dy = -1; dy <= 1; ++dy)
+    for (int dy = -2; dy <= 2; ++dy)
     {
         [unroll]
-        for (int dx = -1; dx <= 1; ++dx)
+        for (int dx = -2; dx <= 2; ++dx)
         {
             float2 offset = float2(dx, dy) * texel;
             shadow += ShadowMap.SampleCmpLevelZero(
                 ShadowSamp,
                 float3(uv + offset, cascade),
-                depth + bias);
+                depth - bias);
         }
     }
-    shadow /= 9.f;
-    return shadow * shadow;
+    return shadow / 25.f;
+}
+
+float SampleShadowPCF(float3 worldPos, float3 N, float3 Ldir)
+{
+    const float3 samplePos = worldPos + N * ShadowParams.z;
+    const float viewDepth = mul(float4(samplePos, 1.f), CameraView).z;
+    const uint cascade = SelectCascade(viewDepth);
+    float result = SampleShadowCascade(samplePos, N, Ldir, cascade);
+
+    // Blend the last 12% of a cascade with the next one. Without this, the
+    // change in texel density creates a visible line/pop at every split.
+    if (cascade < MAX_CASCADES - 1)
+    {
+        const float cascadeNear = cascade == 0 ? 0.1f : CascadeSplits[cascade - 1];
+        const float cascadeFar = CascadeSplits[cascade];
+        const float blendWidth = max((cascadeFar - cascadeNear) * 0.12f, 0.001f);
+        const float blend = saturate((viewDepth - (cascadeFar - blendWidth)) / blendWidth);
+        if (blend > 0.f)
+        {
+            const float nextShadow = SampleShadowCascade(samplePos, N, Ldir, cascade + 1);
+            result = lerp(result, nextShadow, blend);
+        }
+    }
+    return result;
 }
 
 static const float PI = 3.14159265359;
@@ -303,6 +327,7 @@ float4 LightingPS(FsOut pin) : SV_Target0
     float nDotV = saturate(dot(N, V));
     float3 f0 = lerp(float3(0.04, 0.04, 0.04), alb, metallic);
     float3 directLighting = 0.0;
+    float directionalShadowVisibility = 1.0;
 
     for (uint i = 0; i < LightCount; ++i)
     {
@@ -317,6 +342,7 @@ float4 LightingPS(FsOut pin) : SV_Target0
         {
             Ldir = normalize(-Lg.direction_cosOuter.xyz);
             shadow = SampleShadowPCF(P, N, Ldir);
+            directionalShadowVisibility = min(directionalShadowVisibility, shadow);
         }
         else if (Lg.type == LIGHT_POINT)
         {
@@ -371,6 +397,28 @@ float4 LightingPS(FsOut pin) : SV_Target0
         + prefilteredEnvironment * (ambientFresnel * environmentBrdf.x + environmentBrdf.y);
 
     float3 color = directLighting + ambient * 0.45;
+
+    // Use the existing PCF visibility as a soft mask. Robi is projected in
+    // world space so it stays attached to the wall when the camera moves.
+#if SHADOW_OVERLAY_ENABLED
+    const float3 absNormal = abs(N);
+    const float wallMask = smoothstep(0.72, 0.92, 1.0 - absNormal.y);
+    float2 overlayUv = absNormal.x > absNormal.z
+        ? float2(P.z, -P.y)
+        : float2(P.x, -P.y);
+    // One image tile per 5 world units. frac() makes the texture repeat
+    // independently on differently oriented vertical walls.
+    overlayUv = frac(overlayUv * 0.20);
+    float3 overlaySrgb = ShadowOverlayMap.Sample(GSamp, overlayUv).rgb;
+    float3 overlayLinear = pow(saturate(overlaySrgb), 2.2);
+    // Ignore the noisiest edge of the PCF penumbra: it changes with tiny
+    // sub-texel camera movements and previously made the full-screen image
+    // flash. The transition remains soft, but Robi appears only in a stable,
+    // sufficiently deep part of the shadow.
+    float shadowMask = smoothstep(0.35, 0.82, 1.0 - directionalShadowVisibility);
+    color = lerp(color, overlayLinear, shadowMask * wallMask * 0.82);
+#endif
+
     color = color / (color + 1.0);
     color = pow(saturate(color), 1.0 / 2.2);
     return float4(color, 1.f);

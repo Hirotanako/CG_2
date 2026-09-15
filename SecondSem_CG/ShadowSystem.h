@@ -12,14 +12,15 @@
 class ShadowSystem
 {
 public:
+    static constexpr UINT kFrameCount = 2;
     static constexpr UINT kCascadeCount = 4;
     static constexpr UINT kMapSize = 2048;
     static constexpr float kSplitLambda = 0.72f;
     static constexpr float kCameraNear = 0.1f;
     static constexpr float kCameraFar = 500.0f;
-    static constexpr float kShadowBias = 0.00006f;
-    static constexpr float kNormalBias = 0.012f;
-    static constexpr float kSlopeScale = 0.0018f;
+    static constexpr float kShadowBias = 0.00025f;
+    static constexpr float kNormalBias = 0.015f;
+    static constexpr float kSlopeScale = 0.0015f;
 
     void Init(
         ID3D12Device* device,
@@ -29,6 +30,7 @@ public:
         const wchar_t* deferredHlslPath);
 
     void UpdateCascades(
+        UINT frameIndex,
         const DirectX::XMMATRIX& cameraView,
         const DirectX::XMMATRIX& cameraProj,
         const DirectX::XMFLOAT3& cameraPos,
@@ -61,11 +63,12 @@ private:
 
     Microsoft::WRL::ComPtr<ID3D12Resource> m_shadowMap;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_dsvHeap;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_shadowCB;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_shadowCB[kFrameCount];
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_rootSig;
     Microsoft::WRL::ComPtr<ID3D12PipelineState> m_psoShadow;
 
-    uint8_t* m_shadowCBMapped = nullptr;
+    uint8_t* m_shadowCBMapped[kFrameCount]{};
+    UINT m_currentFrame = 0;
     UINT m_shadowSrvSlot = 0;
     UINT m_srvIncrement = 0;
     UINT m_dsvDescriptorSize = 0;

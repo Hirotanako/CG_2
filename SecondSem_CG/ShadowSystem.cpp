@@ -167,23 +167,30 @@ void ShadowSystem::CreateResources(ID3D12Device* device, ID3D12DescriptorHeap* s
     srv.Texture2DArray.ArraySize = ShadowSystem::kCascadeCount;
     device->CreateShaderResourceView(m_shadowMap.Get(), &srv, srvCpu);
 
-    m_shadowCB = CreateUploadCb(device, sizeof(ShadowCBGPU));
     D3D12_RANGE rr{0, 0};
-    if (FAILED(m_shadowCB->Map(0, &rr, reinterpret_cast<void**>(&m_shadowCBMapped))))
-        std::exit(static_cast<int>(E_FAIL));
-    std::memset(m_shadowCBMapped, 0, sizeof(ShadowCBGPU));
+    for (UINT frame = 0; frame < kFrameCount; ++frame)
+    {
+        m_shadowCB[frame] = CreateUploadCb(device, sizeof(ShadowCBGPU));
+        if (FAILED(m_shadowCB[frame]->Map(
+                0, &rr, reinterpret_cast<void**>(&m_shadowCBMapped[frame]))))
+            std::exit(static_cast<int>(E_FAIL));
+        std::memset(m_shadowCBMapped[frame], 0, sizeof(ShadowCBGPU));
+    }
 }
 
 void ShadowSystem::CreatePipeline(ID3D12Device* device, const wchar_t* hlslPath)
 {
-    D3D12_ROOT_PARAMETER param{};
-    param.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-    param.Descriptor.ShaderRegister = 0;
-    param.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    D3D12_ROOT_PARAMETER params[2]{};
+    params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[0].Descriptor.ShaderRegister = 0;
+    params[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    params[1].Descriptor.ShaderRegister = 1;
+    params[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
 
     D3D12_ROOT_SIGNATURE_DESC rsDesc{};
-    rsDesc.NumParameters = 1;
-    rsDesc.pParameters = &param;
+    rsDesc.NumParameters = _countof(params);
+    rsDesc.pParameters = params;
     rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> sigBlob, rsErr;
@@ -200,11 +207,13 @@ void ShadowSystem::CreatePipeline(ID3D12Device* device, const wchar_t* hlslPath)
     pso.pRootSignature = m_rootSig.Get();
     pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-    pso.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+    // Sponza contains thin/two-sided architectural and curtain geometry.
+    // Rendering both sides prevents entire casters from disappearing.
+    pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
     pso.RasterizerState.DepthClipEnable = TRUE;
-    pso.RasterizerState.DepthBias = 25000;
+    pso.RasterizerState.DepthBias = 1000;
     pso.RasterizerState.DepthBiasClamp = 0.0f;
-    pso.RasterizerState.SlopeScaledDepthBias = 2.5f;
+    pso.RasterizerState.SlopeScaledDepthBias = 1.5f;
     pso.DepthStencilState.DepthEnable = TRUE;
     pso.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
     pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
@@ -248,7 +257,10 @@ XMMATRIX ShadowSystem::ComputeCascadeMatrix(
 {
     const float aspect = ExtractAspect(cameraProj);
     const XMMATRIX cascadeProj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, splitNear, splitFar);
-    const XMMATRIX invViewProj = XMMatrixInverse(nullptr, cascadeProj * cameraView);
+    // HLSL uses row vectors (mul(position, matrix)), so the camera transform
+    // is View * Projection. Reversing this order produces invalid frustum
+    // corners and was the main cause of the large broken shadow regions.
+    const XMMATRIX invViewProj = XMMatrixInverse(nullptr, cameraView * cascadeProj);
 
     const auto corners = FrustumCornersWorld(invViewProj);
 
@@ -257,13 +269,21 @@ XMMATRIX ShadowSystem::ComputeCascadeMatrix(
         center = XMVectorAdd(center, XMLoadFloat3(&c));
     center = XMVectorScale(center, 1.f / 8.f);
 
+    float radius = 0.f;
+    for (const XMFLOAT3& c : corners)
+    {
+        const XMVECTOR delta = XMVectorSubtract(XMLoadFloat3(&c), center);
+        radius = (std::max)(radius, XMVectorGetX(XMVector3Length(delta)));
+    }
+    // A fixed-size square projection per split avoids the shadow-map scale
+    // changing when the camera rotates. Quantization removes sub-texel crawl.
+    radius = ceilf(radius * 16.f) / 16.f;
+
     const XMVECTOR lightDirN = XMVector3Normalize(lightDir);
-    const XMVECTOR lightPos = XMVectorSubtract(center, XMVectorScale(lightDirN, 80.f));
+    const XMVECTOR lightPos = XMVectorSubtract(center, XMVectorScale(lightDirN, radius + 50.f));
     const XMVECTOR up = XMVectorSet(0.f, 1.f, 0.f, 0.f);
     const XMMATRIX lightView = XMMatrixLookAtLH(lightPos, center, up);
 
-    float minX = FLT_MAX, maxX = -FLT_MAX;
-    float minY = FLT_MAX, maxY = -FLT_MAX;
     float minZ = FLT_MAX, maxZ = -FLT_MAX;
 
     for (const XMFLOAT3& c : corners)
@@ -271,34 +291,29 @@ XMMATRIX ShadowSystem::ComputeCascadeMatrix(
         const XMVECTOR ls = XMVector3TransformCoord(XMLoadFloat3(&c), lightView);
         XMFLOAT3 lsF{};
         XMStoreFloat3(&lsF, ls);
-        minX = (std::min)(minX, lsF.x);
-        maxX = (std::max)(maxX, lsF.x);
-        minY = (std::min)(minY, lsF.y);
-        maxY = (std::max)(maxY, lsF.y);
         minZ = (std::min)(minZ, lsF.z);
         maxZ = (std::max)(maxZ, lsF.z);
     }
 
-    const float margin = 6.f;
-    minX -= margin;
-    maxX += margin;
-    minY -= margin;
-    maxY += margin;
-    minZ -= 25.f;
-    maxZ += 25.f;
+    XMFLOAT3 centerLightSpace{};
+    XMStoreFloat3(&centerLightSpace, XMVector3TransformCoord(center, lightView));
+    const float worldUnitsPerTexel = (2.f * radius) / static_cast<float>(kMapSize);
+    centerLightSpace.x = floorf(centerLightSpace.x / worldUnitsPerTexel + 0.5f) * worldUnitsPerTexel;
+    centerLightSpace.y = floorf(centerLightSpace.y / worldUnitsPerTexel + 0.5f) * worldUnitsPerTexel;
 
-    const float worldUnitsPerTexelX = (maxX - minX) / static_cast<float>(kMapSize);
-    const float worldUnitsPerTexelY = (maxY - minY) / static_cast<float>(kMapSize);
-    minX = floorf(minX / worldUnitsPerTexelX) * worldUnitsPerTexelX;
-    maxX = floorf(maxX / worldUnitsPerTexelX) * worldUnitsPerTexelX;
-    minY = floorf(minY / worldUnitsPerTexelY) * worldUnitsPerTexelY;
-    maxY = floorf(maxY / worldUnitsPerTexelY) * worldUnitsPerTexelY;
+    const float minX = centerLightSpace.x - radius;
+    const float maxX = centerLightSpace.x + radius;
+    const float minY = centerLightSpace.y - radius;
+    const float maxY = centerLightSpace.y + radius;
+    minZ -= 50.f;
+    maxZ += 50.f;
 
     const XMMATRIX lightProj = XMMatrixOrthographicOffCenterLH(minX, maxX, minY, maxY, minZ, maxZ);
     return lightView * lightProj;
 }
 
 void ShadowSystem::UpdateCascades(
+    UINT frameIndex,
     const XMMATRIX& cameraView,
     const XMMATRIX& cameraProj,
     const XMFLOAT3& /*cameraPos*/,
@@ -306,7 +321,8 @@ void ShadowSystem::UpdateCascades(
     const XMFLOAT3& sceneCenter,
     float /*sceneRadius*/)
 {
-    auto* cb = reinterpret_cast<ShadowCBGPU*>(m_shadowCBMapped);
+    m_currentFrame = frameIndex % kFrameCount;
+    auto* cb = reinterpret_cast<ShadowCBGPU*>(m_shadowCBMapped[m_currentFrame]);
 
     float splits[ShadowSystem::kCascadeCount]{};
     ComputeSplitDistances(kCameraNear, kCameraFar, kSplitLambda, splits, ShadowSystem::kCascadeCount);
@@ -358,7 +374,7 @@ void ShadowSystem::DrawShadowPass(
     cmd->RSSetViewports(1, &vp);
     cmd->RSSetScissorRects(1, &sr);
 
-    const auto* cb = reinterpret_cast<const ShadowCBGPU*>(m_shadowCBMapped);
+    const auto* cb = reinterpret_cast<const ShadowCBGPU*>(m_shadowCBMapped[m_currentFrame]);
     D3D12_CPU_DESCRIPTOR_HANDLE dsvBase = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
 
     for (UINT c = 0; c < ShadowSystem::kCascadeCount; ++c)
@@ -395,5 +411,5 @@ D3D12_GPU_DESCRIPTOR_HANDLE ShadowSystem::ShadowSrvGpu(ID3D12DescriptorHeap* srv
 
 D3D12_GPU_VIRTUAL_ADDRESS ShadowSystem::ShadowCBAddress() const
 {
-    return m_shadowCB ? m_shadowCB->GetGPUVirtualAddress() : 0;
+    return m_shadowCB[m_currentFrame] ? m_shadowCB[m_currentFrame]->GetGPUVirtualAddress() : 0;
 }

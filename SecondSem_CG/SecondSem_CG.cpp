@@ -45,6 +45,8 @@ using namespace DirectX;
 namespace
 {
 constexpr UINT kFrameCount = 2;
+constexpr UINT kSceneFrameCbSlots = ShadowSystem::kCascadeCount + 1;
+constexpr UINT kGeometryFrameCbSlot = ShadowSystem::kCascadeCount;
 constexpr UINT kClientW = 1280;
 constexpr UINT kClientH = 720;
 constexpr UINT kSrvHeapCount = 512;
@@ -53,7 +55,9 @@ constexpr UINT kShadowSrvBase = 403;
 constexpr UINT kParticleSrvBase = 420;
 constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kIblSrvBase = 410;
+constexpr UINT kShadowOverlaySrvBase = 411;
 constexpr bool kPostProcessEnabled = false;
+constexpr bool kShadowOverlayEnabled = true;
 constexpr UINT kCerberusMaterialSrvBase = 380;
 constexpr UINT kWoodMaterialSrvBase = 384;
 constexpr UINT kCbAlign = 256;
@@ -348,7 +352,8 @@ ComPtr<ID3D12Resource> CreateUploadBuffer(const void* data, UINT64 size)
 
 void CreateFrameCB()
 {
-    g_frameCBUpload = CreateUploadBuffer(nullptr, sizeof(FrameCB));
+    g_frameCBUpload = CreateUploadBuffer(
+        nullptr, static_cast<UINT64>(kFrameCount) * kSceneFrameCbSlots * kCbAlign);
     D3D12_RANGE rr{0, 0};
     ThrowIfFailed(g_frameCBUpload->Map(0, &rr, reinterpret_cast<void**>(&g_frameCBMapped)));
 }
@@ -495,6 +500,38 @@ std::filesystem::path FindSponzaObj()
             if (std::filesystem::exists(candidate))
                 return candidate;
         }
+    }
+    return {};
+}
+
+std::filesystem::path FindRobiTexture()
+{
+    std::vector<std::filesystem::path> roots;
+    roots.emplace_back(ExeDirectory());
+    try
+    {
+        roots.emplace_back(std::filesystem::current_path());
+    }
+    catch (...)
+    {
+    }
+
+    const size_t initialRootCount = roots.size();
+    for (size_t i = 0; i < initialRootCount; ++i)
+    {
+        std::filesystem::path parent = roots[i];
+        for (int depth = 0; depth < 5 && !parent.empty(); ++depth)
+        {
+            parent = parent.parent_path();
+            roots.push_back(parent);
+        }
+    }
+
+    for (const std::filesystem::path& root : roots)
+    {
+        const std::filesystem::path candidate = root / L"Robi.jpg";
+        if (std::filesystem::exists(candidate))
+            return candidate;
     }
     return {};
 }
@@ -800,6 +837,28 @@ bool LoadScene()
     }
     g_gpuTextures.push_back(g_environmentTexture);
 
+    // Robi is sampled by the deferred lighting pass and revealed only by the
+    // soft-shadow mask. Keep it next to the solution, project or executable.
+    const std::filesystem::path robiTexture =
+        kShadowOverlayEnabled ? FindRobiTexture() : std::filesystem::path{};
+    if (!kShadowOverlayEnabled)
+    {
+        Tex::WriteTexture2DSrv(
+            g_device.Get(), g_blackTexture.Get(), g_srvHeap.Get(),
+            kShadowOverlaySrvBase, g_srvDescriptorSize);
+    }
+    else if (robiTexture.empty() || !bindTextureSlot(kShadowOverlaySrvBase, robiTexture))
+    {
+        MessageBoxW(
+            g_hwnd,
+            L"Не удалось загрузить Robi.jpg. Изображение в тенях будет отключено.",
+            L"Shadow overlay",
+            MB_OK | MB_ICONWARNING);
+        Tex::WriteTexture2DSrv(
+            g_device.Get(), g_blackTexture.Get(), g_srvHeap.Get(),
+            kShadowOverlaySrvBase, g_srvDescriptorSize);
+    }
+
     ExecuteCommandList();
     uploadKeep.clear();
 
@@ -941,7 +1000,8 @@ void CreateCubes()
     g_cubeVbv = {g_cubeVB->GetGPUVirtualAddress(), vbSize, sizeof(Obj::MeshVertex)};
     g_cubeIbv = {g_cubeIB->GetGPUVirtualAddress(), ibSize, DXGI_FORMAT_R32_UINT};
 
-    g_cubeFrameCBUpload = CreateUploadBuffer(nullptr, sizeof(FrameCB));
+    g_cubeFrameCBUpload = CreateUploadBuffer(
+        nullptr, static_cast<UINT64>(kFrameCount) * kSceneFrameCbSlots * kCbAlign);
     ThrowIfFailed(g_cubeFrameCBUpload->Map(
         0, &noRead, reinterpret_cast<void**>(&g_cubeFrameCBMapped)));
 }
@@ -958,9 +1018,28 @@ void WriteFrameCBTo(UINT8* destination, const XMMATRIX& world, const XMMATRIX& v
     std::memcpy(destination, &data, sizeof(FrameCB));
 }
 
-void WriteFrameCB(const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
+UINT8* SceneFrameCbMapped(UINT frameIndex, UINT slot)
 {
-    WriteFrameCBTo(g_frameCBMapped, world, viewProj, timeSec);
+    return g_frameCBMapped
+        + (static_cast<size_t>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS SceneFrameCbAddress(UINT frameIndex, UINT slot)
+{
+    return g_frameCBUpload->GetGPUVirtualAddress()
+        + (static_cast<UINT64>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+UINT8* CubeFrameCbMapped(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_cubeFrameCBMapped
+        + (static_cast<size_t>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS CubeFrameCbAddress(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_cubeFrameCBUpload->GetGPUVirtualAddress()
+        + (static_cast<UINT64>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
 }
 
 XMMATRIX CalcView()
@@ -1071,8 +1150,10 @@ void DrawScene(const XMMATRIX& viewProj)
     g_cmdList->SetPipelineState(g_pipelineGeo.Get());
 
     const XMMATRIX world = MeshWorldTransform();
-    WriteFrameCB(world, viewProj, g_appTime);
-    g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
+    WriteFrameCBTo(
+        SceneFrameCbMapped(g_frameIndex, kGeometryFrameCbSlot), world, viewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, SceneFrameCbAddress(g_frameIndex, kGeometryFrameCbSlot));
 
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
@@ -1105,9 +1186,9 @@ void DrawCubes(const XMMATRIX& viewProj)
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
     g_cmdList->SetPipelineState(g_pipelineGeo.Get());
 
-    WriteFrameCBTo(g_cubeFrameCBMapped, XMMatrixIdentity(), viewProj, g_appTime);
+    WriteFrameCBTo(CubeFrameCbMapped(g_frameIndex), XMMatrixIdentity(), viewProj, g_appTime);
     g_cmdList->SetGraphicsRootConstantBufferView(
-        0, g_cubeFrameCBUpload->GetGPUVirtualAddress());
+        0, CubeFrameCbAddress(g_frameIndex));
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_cubeVbv);
     g_cmdList->IASetIndexBuffer(&g_cubeIbv);
@@ -1129,21 +1210,45 @@ void DrawCubes(const XMMATRIX& viewProj)
     }
 }
 
-void DrawSceneDepth(const XMMATRIX& lightViewProj)
+void DrawSceneDepth(const XMMATRIX& lightViewProj, UINT cascadeIndex)
 {
     if (!g_sceneReady)
         return;
 
     const XMMATRIX world = MeshWorldTransform();
-    WriteFrameCB(world, lightViewProj, g_appTime);
-    g_cmdList->SetGraphicsRootConstantBufferView(0, g_frameCBUpload->GetGPUVirtualAddress());
+    WriteFrameCBTo(
+        SceneFrameCbMapped(g_frameIndex, cascadeIndex), world, lightViewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, SceneFrameCbAddress(g_frameIndex, cascadeIndex));
 
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     g_cmdList->IASetVertexBuffers(0, 1, &g_meshVbv);
     g_cmdList->IASetIndexBuffer(&g_meshIbv);
 
     for (const Obj::Submesh& sm : g_mesh.submeshes)
+    {
+        if (sm.materialIndex >= g_matSrvPairBase.size())
+            continue;
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            1, g_matCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(sm.materialIndex) * kCbAlign);
         g_cmdList->DrawIndexedInstanced(sm.indexCount, 1, sm.indexStart, 0, 0);
+    }
+
+    // The cube field is part of the visible scene, so it must also be present
+    // in every cascade. It was previously missing from the shadow map.
+    if (!g_cubeVB || !g_cubeIB || !g_cubeMatCBUpload)
+        return;
+    WriteFrameCBTo(
+        CubeFrameCbMapped(g_frameIndex, cascadeIndex),
+        XMMatrixIdentity(), lightViewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, CubeFrameCbAddress(g_frameIndex, cascadeIndex));
+    g_cmdList->IASetVertexBuffers(0, 1, &g_cubeVbv);
+    g_cmdList->IASetIndexBuffer(&g_cubeIbv);
+    // ShadowVS only needs the animation flag from the material; all cubes are
+    // static, so the entire concatenated index buffer is one shadow draw.
+    g_cmdList->SetGraphicsRootConstantBufferView(1, g_cubeMatCBUpload->GetGPUVirtualAddress());
+    g_cmdList->DrawIndexedInstanced(kCubeCount * 36u, 1, 0, 0, 0);
 }
 
 void DrawFrame(float dt)
@@ -1165,7 +1270,7 @@ void DrawFrame(float dt)
     const XMMATRIX viewProj = view * proj;
 
     g_shadowSys.UpdateCascades(
-        view, proj, g_camPos, g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
+        g_frameIndex, view, proj, g_camPos, g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipelineGeo.Get()));
@@ -1173,8 +1278,9 @@ void DrawFrame(float dt)
     ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
     g_cmdList->SetDescriptorHeaps(1, heaps);
 
-    g_shadowSys.DrawShadowPass(g_cmdList.Get(), [](const XMMATRIX& lightViewProj) {
-        DrawSceneDepth(lightViewProj);
+    UINT shadowCascade = 0;
+    g_shadowSys.DrawShadowPass(g_cmdList.Get(), [&shadowCascade](const XMMATRIX& lightViewProj) {
+        DrawSceneDepth(lightViewProj, shadowCascade++);
     });
     g_shadowSys.TransitionToShaderResource(g_cmdList.Get());
 
@@ -1211,7 +1317,7 @@ void DrawFrame(float dt)
 
     // PostProcessSystem remains initialized and compiled, but its Grayscale
     // and Blur passes are intentionally bypassed for the PBR + IBL task.
-    g_renderSys.UploadFrameConstants(g_camPos, g_width, g_height);
+    g_renderSys.UploadFrameConstants(g_frameIndex, g_camPos, g_width, g_height);
     g_renderSys.DrawLightingPass(
         g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, rtv, g_width, g_height);
 
