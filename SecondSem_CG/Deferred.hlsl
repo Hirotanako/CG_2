@@ -148,7 +148,7 @@ SamplerState EnvironmentSamp : register(s2);
 #define LIGHT_SPOT 2
 #define MAX_LIGHTS 8
 #define MAX_CASCADES 4
-#define SHADOW_OVERLAY_ENABLED 1
+#define SHADOW_OVERLAY_ENABLED 0
 
 struct GpuLight
 {

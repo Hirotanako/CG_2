@@ -6,6 +6,8 @@
 #include <windows.h>
 #include <d3dcompiler.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cwchar>
 #include <cstdlib>
 
@@ -98,15 +100,14 @@ void PostProcessSystem::CreatePipeline(ID3D12Device* device, const wchar_t* shad
         0, serialized->GetBufferPointer(), serialized->GetBufferSize(),
         IID_PPV_ARGS(&m_rootSignature)), L"Post-process root signature creation");
 
-    ComPtr<ID3DBlob> vs, grayscalePs, blurPs;
+    ComPtr<ID3DBlob> vs, chromaticAberrationPs;
     Compile(shaderPath, "PostProcessVS", "vs_5_0", vs);
-    Compile(shaderPath, "GrayscalePS", "ps_5_0", grayscalePs);
-    Compile(shaderPath, "BlurPS", "ps_5_0", blurPs);
+    Compile(shaderPath, "ChromaticAberrationPS", "ps_5_0", chromaticAberrationPs);
 
     D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
     pso.pRootSignature = m_rootSignature.Get();
     pso.VS = {vs->GetBufferPointer(), vs->GetBufferSize()};
-    pso.PS = {grayscalePs->GetBufferPointer(), grayscalePs->GetBufferSize()};
+    pso.PS = {chromaticAberrationPs->GetBufferPointer(), chromaticAberrationPs->GetBufferSize()};
     pso.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     pso.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
     pso.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -116,12 +117,8 @@ void PostProcessSystem::CreatePipeline(ID3D12Device* device, const wchar_t* shad
     pso.NumRenderTargets = 1;
     pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     pso.SampleDesc.Count = 1;
-    Check(device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_grayscalePso)),
-        L"Grayscale pipeline creation");
-
-    pso.PS = {blurPs->GetBufferPointer(), blurPs->GetBufferSize()};
-    Check(device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_blurPso)),
-        L"Blur pipeline creation");
+    Check(device->CreateGraphicsPipelineState(&pso, IID_PPV_ARGS(&m_chromaticAberrationPso)),
+        L"Chromatic aberration pipeline creation");
 }
 
 void PostProcessSystem::CreateTargets(
@@ -131,7 +128,6 @@ void PostProcessSystem::CreateTargets(
     ID3D12DescriptorHeap* shaderVisibleSrvHeap)
 {
     m_sceneColor.Reset();
-    m_grayscaleColor.Reset();
 
     D3D12_HEAP_PROPERTIES heap{};
     heap.Type = D3D12_HEAP_TYPE_DEFAULT;
@@ -151,17 +147,11 @@ void PostProcessSystem::CreateTargets(
     Check(device->CreateCommittedResource(
         &heap, D3D12_HEAP_FLAG_NONE, &texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
         &clear, IID_PPV_ARGS(&m_sceneColor)), L"Scene post-process target creation");
-    Check(device->CreateCommittedResource(
-        &heap, D3D12_HEAP_FLAG_NONE, &texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-        &clear, IID_PPV_ARGS(&m_grayscaleColor)), L"Grayscale target creation");
-
     D3D12_RENDER_TARGET_VIEW_DESC rtv{};
     rtv.Format = texture.Format;
     rtv.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     device->CreateRenderTargetView(m_sceneColor.Get(), &rtv, rtvHandle);
-    rtvHandle.ptr += m_rtvIncrement;
-    device->CreateRenderTargetView(m_grayscaleColor.Get(), &rtv, rtvHandle);
 
     D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
     srv.Format = texture.Format;
@@ -171,8 +161,6 @@ void PostProcessSystem::CreateTargets(
     D3D12_CPU_DESCRIPTOR_HANDLE srvHandle = shaderVisibleSrvHeap->GetCPUDescriptorHandleForHeapStart();
     srvHandle.ptr += static_cast<SIZE_T>(m_srvBase) * m_srvIncrement;
     device->CreateShaderResourceView(m_sceneColor.Get(), &srv, srvHandle);
-    srvHandle.ptr += m_srvIncrement;
-    device->CreateShaderResourceView(m_grayscaleColor.Get(), &srv, srvHandle);
 }
 
 void PostProcessSystem::Init(
@@ -190,7 +178,7 @@ void PostProcessSystem::Init(
 
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
     rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-    rtvHeapDesc.NumDescriptors = 2;
+    rtvHeapDesc.NumDescriptors = 1;
     Check(device->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&m_rtvHeap)),
         L"Post-process RTV heap creation");
     CreatePipeline(device, shaderPath);
@@ -220,15 +208,13 @@ void PostProcessSystem::Apply(
     ID3D12DescriptorHeap* shaderVisibleSrvHeap,
     D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv,
     UINT width,
-    UINT height)
+    UINT height,
+    float cameraSpeed)
 {
-    D3D12_RESOURCE_BARRIER grayscaleBarriers[2] = {
-        Transition(m_sceneColor.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
-        Transition(m_grayscaleColor.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            D3D12_RESOURCE_STATE_RENDER_TARGET),
-    };
-    cmd->ResourceBarrier(_countof(grayscaleBarriers), grayscaleBarriers);
+    const D3D12_RESOURCE_BARRIER sceneToSrv = Transition(
+        m_sceneColor.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    cmd->ResourceBarrier(1, &sceneToSrv);
 
     ID3D12DescriptorHeap* heaps[] = {shaderVisibleSrvHeap};
     cmd->SetDescriptorHeaps(1, heaps);
@@ -237,30 +223,22 @@ void PostProcessSystem::Apply(
     cmd->IASetVertexBuffers(0, 0, nullptr);
     cmd->IASetIndexBuffer(nullptr);
 
+    // A square-root response makes slow movement visible without leaving any
+    // aberration while the camera is stationary. At the normal movement speed
+    // the per-channel displacement reaches 1.8% near the screen edges.
+    const float normalizedSpeed = (std::min)(cameraSpeed / 4.0f, 1.0f);
+    const float aberrationStrength = std::sqrt((std::max)(normalizedSpeed, 0.0f)) * 0.018f;
     const float constants[4] = {
         width > 0 ? 1.f / static_cast<float>(width) : 1.f,
         height > 0 ? 1.f / static_cast<float>(height) : 1.f,
-        0.f, 0.f};
+        aberrationStrength,
+        0.f};
     cmd->SetGraphicsRoot32BitConstants(1, 4, constants, 0);
 
     D3D12_GPU_DESCRIPTOR_HANDLE srv = shaderVisibleSrvHeap->GetGPUDescriptorHandleForHeapStart();
     srv.ptr += static_cast<SIZE_T>(m_srvBase) * m_srvIncrement;
     cmd->SetGraphicsRootDescriptorTable(0, srv);
-    D3D12_CPU_DESCRIPTOR_HANDLE grayscaleRtv = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    grayscaleRtv.ptr += m_rtvIncrement;
-    cmd->OMSetRenderTargets(1, &grayscaleRtv, FALSE, nullptr);
-    cmd->SetPipelineState(m_grayscalePso.Get());
-    cmd->DrawInstanced(3, 1, 0, 0);
-
-    const D3D12_RESOURCE_BARRIER grayscaleToSrv = Transition(
-        m_grayscaleColor.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    cmd->ResourceBarrier(1, &grayscaleToSrv);
-
-    srv = shaderVisibleSrvHeap->GetGPUDescriptorHandleForHeapStart();
-    srv.ptr += static_cast<SIZE_T>(m_srvBase + 1u) * m_srvIncrement;
-    cmd->SetGraphicsRootDescriptorTable(0, srv);
     cmd->OMSetRenderTargets(1, &backbufferRtv, FALSE, nullptr);
-    cmd->SetPipelineState(m_blurPso.Get());
+    cmd->SetPipelineState(m_chromaticAberrationPso.Get());
     cmd->DrawInstanced(3, 1, 0, 0);
 }

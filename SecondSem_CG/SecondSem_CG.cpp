@@ -56,8 +56,8 @@ constexpr UINT kParticleSrvBase = 420;
 constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kIblSrvBase = 410;
 constexpr UINT kShadowOverlaySrvBase = 411;
-constexpr bool kPostProcessEnabled = false;
-constexpr bool kShadowOverlayEnabled = true;
+constexpr bool kPostProcessEnabled = true;
+constexpr bool kShadowOverlayEnabled = false;
 constexpr UINT kCerberusMaterialSrvBase = 380;
 constexpr UINT kWoodMaterialSrvBase = 384;
 constexpr UINT kCbAlign = 256;
@@ -166,6 +166,7 @@ XMFLOAT3 g_camPos{0.0f, 1.4f, 4.5f};
 float g_camYaw = 0.0f;
 float g_camPitch = -0.12f;
 bool g_camPrevRmb = false;
+float g_smoothedCameraSpeed = 0.0f;
 
 XMFLOAT3 g_sceneCenter{0.f, 2.f, 0.f};
 float g_sceneRadius = 25.f;
@@ -562,10 +563,9 @@ static bool MaterialPathSuggestSway(const std::wstring& rel)
 
 XMMATRIX MeshWorldTransform()
 {
-    // This Sponza export is upside-down relative to the application's Y-up
-    // world. RotationX(PI) converts (x,y,z) to (x,-y,-z). Its determinant is
-    // positive, so triangle winding is preserved.
-    return XMMatrixScaling(0.01f, 0.01f, 0.01f) * XMMatrixRotationX(XM_PI);
+    // The source mesh is already Y-up. Applying an additional half-turn around
+    // X placed the whole building upside-down.
+    return XMMatrixScaling(0.01f, 0.01f, 0.01f);
 }
 
 static bool IsFloorMaterial(UINT materialIndex)
@@ -1262,7 +1262,24 @@ void DrawFrame(float dt)
         WaitForSingleObject(g_fenceEvent, INFINITE);
     }
 
+    const XMFLOAT3 previousCameraPosition = g_camPos;
+    const float previousCameraYaw = g_camYaw;
+    const float previousCameraPitch = g_camPitch;
     UpdateCamera(dt);
+    if (dt > 0.0f)
+    {
+        const XMVECTOR cameraDelta = XMVectorSubtract(
+            XMLoadFloat3(&g_camPos), XMLoadFloat3(&previousCameraPosition));
+        const float linearSpeed = XMVectorGetX(XMVector3Length(cameraDelta)) / dt;
+        const float yawDelta = g_camYaw - previousCameraYaw;
+        const float pitchDelta = g_camPitch - previousCameraPitch;
+        const float angularSpeed = std::sqrt(yawDelta * yawDelta + pitchDelta * pitchDelta) / dt;
+        // Camera rotation is motion too. Convert radians/s to an equivalent
+        // linear speed so looking around also drives the post-process effect.
+        const float cameraSpeed = linearSpeed + angularSpeed * 2.0f;
+        const float smoothing = 1.0f - std::exp(-10.0f * dt);
+        g_smoothedCameraSpeed += (cameraSpeed - g_smoothedCameraSpeed) * smoothing;
+    }
     g_appTime += dt;
 
     const XMMATRIX view = CalcView();
@@ -1315,11 +1332,17 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    // PostProcessSystem remains initialized and compiled, but its Grayscale
-    // and Blur passes are intentionally bypassed for the PBR + IBL task.
     g_renderSys.UploadFrameConstants(g_frameIndex, g_camPos, g_width, g_height);
+    const D3D12_CPU_DESCRIPTOR_HANDLE lightingRtv = kPostProcessEnabled
+        ? g_postProcessSys.BeginScene(g_cmdList.Get())
+        : rtv;
     g_renderSys.DrawLightingPass(
-        g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, rtv, g_width, g_height);
+        g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, lightingRtv, g_width, g_height);
+    if (kPostProcessEnabled)
+    {
+        g_postProcessSys.Apply(
+            g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height, g_smoothedCameraSpeed);
+    }
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1426,8 +1449,6 @@ void InitD3D(HWND hwnd)
         kShadowSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
-    // Keep the complete post-process implementation in the project, but do
-    // not initialize or run any of its passes while the feature is disabled.
     if (kPostProcessEnabled)
     {
         g_postProcessSys.Init(

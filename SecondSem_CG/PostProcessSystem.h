@@ -6,7 +6,7 @@
 class PostProcessSystem
 {
 public:
-    static constexpr UINT kDescriptorCount = 2;
+    static constexpr UINT kDescriptorCount = 1;
 
     void Init(
         ID3D12Device* device,
@@ -30,7 +30,8 @@ public:
         ID3D12DescriptorHeap* shaderVisibleSrvHeap,
         D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv,
         UINT width,
-        UINT height);
+        UINT height,
+        float cameraSpeed);
 
 private:
     void CreatePipeline(ID3D12Device* device, const wchar_t* shaderPath);
@@ -41,10 +42,8 @@ private:
         ID3D12DescriptorHeap* shaderVisibleSrvHeap);
 
     Microsoft::WRL::ComPtr<ID3D12RootSignature> m_rootSignature;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_grayscalePso;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_blurPso;
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> m_chromaticAberrationPso;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_sceneColor;
-    Microsoft::WRL::ComPtr<ID3D12Resource> m_grayscaleColor;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
 
     UINT m_srvBase = 0;

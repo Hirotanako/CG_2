@@ -4,7 +4,8 @@ SamplerState LinearClampSampler : register(s0);
 cbuffer PostProcessConstants : register(b0)
 {
     float2 TexelSize;
-    float2 Padding;
+    float AberrationStrength;
+    float Padding;
 };
 
 struct FullscreenOutput
@@ -22,36 +23,20 @@ FullscreenOutput PostProcessVS(uint vertexId : SV_VertexID)
     return output;
 }
 
-float4 GrayscalePS(FullscreenOutput input) : SV_Target0
+float4 ChromaticAberrationPS(FullscreenOutput input) : SV_Target0
 {
-    float3 color = InputTexture.Sample(LinearClampSampler, input.uv).rgb;
-    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
-    return float4(luminance.xxx, 1.0);
-}
+    const float2 fromCenter = input.uv - 0.5;
+    const float radius = length(fromCenter);
 
-float4 BlurPS(FullscreenOutput input) : SV_Target0
-{
-    // A visibly wide 9x9 Gaussian. Sampling every two texels gives an
-    // effective radius of eight pixels while bilinear filtering fills the
-    // gaps between samples.
-    static const float weights[9] =
-    {
-        1.0 / 256.0, 8.0 / 256.0, 28.0 / 256.0, 56.0 / 256.0,
-        70.0 / 256.0,
-        56.0 / 256.0, 28.0 / 256.0, 8.0 / 256.0, 1.0 / 256.0
-    };
+    // Keep the image sharp in the center and separate the color channels
+    // progressively towards the edges. AberrationStrength is driven by the
+    // smoothed camera speed on the CPU.
+    const float edgeMask = smoothstep(0.0, 0.62, radius);
+    const float2 radialDirection = fromCenter / max(radius, 1e-4);
+    const float2 offset = radialDirection * AberrationStrength * edgeMask;
 
-    float3 color = 0.0;
-    [unroll]
-    for (int y = -4; y <= 4; ++y)
-    {
-        [unroll]
-        for (int x = -4; x <= 4; ++x)
-        {
-            const float2 offset = float2(x, y) * TexelSize * 2.0;
-            color += InputTexture.Sample(LinearClampSampler, input.uv + offset).rgb
-                * weights[x + 4] * weights[y + 4];
-        }
-    }
-    return float4(color, 1.0);
+    const float red = InputTexture.Sample(LinearClampSampler, input.uv + offset).r;
+    const float green = InputTexture.Sample(LinearClampSampler, input.uv).g;
+    const float blue = InputTexture.Sample(LinearClampSampler, input.uv - offset).b;
+    return float4(red, green, blue, 1.0);
 }
