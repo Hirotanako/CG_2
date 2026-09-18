@@ -82,7 +82,7 @@ struct alignas(256) MatCBGPU
     XMFLOAT3 Ks;
     float Ns;
     UINT UseUvAnim;
-    UINT HasSpecularTex;
+    UINT HasMetallicTex;
     UINT UseSwayAnim;
     float Metallic;
     float Roughness;
@@ -146,6 +146,28 @@ ComPtr<ID3D12Resource> g_environmentTexture;
 ComPtr<ID3D12Resource> g_matCBUpload;
 UINT8* g_matCBMapped = nullptr;
 UINT g_matCount = 0;
+
+Obj::LoadedMesh g_cerberusMesh{};
+ComPtr<ID3D12Resource> g_cerberusVB;
+ComPtr<ID3D12Resource> g_cerberusIB;
+D3D12_VERTEX_BUFFER_VIEW g_cerberusVbv{};
+D3D12_INDEX_BUFFER_VIEW g_cerberusIbv{};
+ComPtr<ID3D12Resource> g_cerberusFrameCBUpload;
+UINT8* g_cerberusFrameCBMapped = nullptr;
+ComPtr<ID3D12Resource> g_cerberusMatCBUpload;
+XMFLOAT3 g_cerberusLocalCenter{};
+float g_cerberusLocalMinY = 0.0f;
+
+Obj::LoadedMesh g_woodRootMesh{};
+ComPtr<ID3D12Resource> g_woodRootVB;
+ComPtr<ID3D12Resource> g_woodRootIB;
+D3D12_VERTEX_BUFFER_VIEW g_woodRootVbv{};
+D3D12_INDEX_BUFFER_VIEW g_woodRootIbv{};
+ComPtr<ID3D12Resource> g_woodRootFrameCBUpload;
+UINT8* g_woodRootFrameCBMapped = nullptr;
+ComPtr<ID3D12Resource> g_woodRootMatCBUpload;
+XMFLOAT3 g_woodRootLocalCenter{};
+float g_woodRootLocalMinY = 0.0f;
 
 ComPtr<ID3D12Resource> g_frameCBUpload;
 UINT8* g_frameCBMapped = nullptr;
@@ -537,6 +559,72 @@ std::filesystem::path FindRobiTexture()
     return {};
 }
 
+std::filesystem::path FindCerberusObj()
+{
+    std::vector<std::filesystem::path> roots;
+    roots.emplace_back(ExeDirectory());
+    try
+    {
+        roots.emplace_back(std::filesystem::current_path());
+    }
+    catch (...)
+    {
+    }
+
+    const size_t initialRootCount = roots.size();
+    for (size_t i = 0; i < initialRootCount; ++i)
+    {
+        std::filesystem::path parent = roots[i];
+        for (int depth = 0; depth < 6 && !parent.empty(); ++depth)
+        {
+            parent = parent.parent_path();
+            roots.push_back(parent);
+        }
+    }
+
+    for (const std::filesystem::path& root : roots)
+    {
+        const std::filesystem::path candidate =
+            root / L"Cerberus_by_Andrew_Maximov" / L"Cerberus_LP.obj";
+        if (std::filesystem::exists(candidate))
+            return candidate;
+    }
+    return {};
+}
+
+std::filesystem::path FindWoodRootObj()
+{
+    std::vector<std::filesystem::path> roots;
+    roots.emplace_back(ExeDirectory());
+    try
+    {
+        roots.emplace_back(std::filesystem::current_path());
+    }
+    catch (...)
+    {
+    }
+
+    const size_t initialRootCount = roots.size();
+    for (size_t i = 0; i < initialRootCount; ++i)
+    {
+        std::filesystem::path parent = roots[i];
+        for (int depth = 0; depth < 6 && !parent.empty(); ++depth)
+        {
+            parent = parent.parent_path();
+            roots.push_back(parent);
+        }
+    }
+
+    for (const std::filesystem::path& root : roots)
+    {
+        const std::filesystem::path candidate =
+            root / L"wood_root" / L"Aset_wood_root_M_rkswd_LOD0.obj";
+        if (std::filesystem::exists(candidate))
+            return candidate;
+    }
+    return {};
+}
+
 static bool MaterialPathSuggestUvAnim(const std::wstring& rel)
 {
     std::wstring s = rel;
@@ -566,6 +654,38 @@ XMMATRIX MeshWorldTransform()
     // The source mesh is already Y-up. Applying an additional half-turn around
     // X placed the whole building upside-down.
     return XMMatrixScaling(0.01f, 0.01f, 0.01f);
+}
+
+XMMATRIX CerberusWorldTransform()
+{
+    constexpr float scale = 2.2f;
+    constexpr float floorSink = 0.18f;
+    const float floorTranslation =
+        g_particleFloorY - g_cerberusLocalMinY * scale - floorSink;
+    // Center the gun next to the camera-facing PBR showcase cubes. Keeping its
+    // original long axis horizontal makes the texture details easy to inspect.
+    return XMMatrixTranslation(
+               -g_cerberusLocalCenter.x, -g_cerberusLocalCenter.y, -g_cerberusLocalCenter.z)
+        * XMMatrixScaling(scale, scale, scale)
+        * XMMatrixRotationY(XM_PIDIV2)
+        * XMMatrixTranslation(
+            g_sceneCenter.x, floorTranslation + g_cerberusLocalCenter.y * scale,
+            g_sceneCenter.z + 1.0f);
+}
+
+XMMATRIX WoodRootWorldTransform()
+{
+    constexpr float scale = 2.4f;
+    const float floorTranslation =
+        g_particleFloorY - g_woodRootLocalMinY * scale + 0.02f;
+    return XMMatrixTranslation(
+               -g_woodRootLocalCenter.x, -g_woodRootLocalCenter.y, -g_woodRootLocalCenter.z)
+        * XMMatrixScaling(scale, scale, scale)
+        * XMMatrixRotationY(-0.42f)
+        * XMMatrixTranslation(
+            g_sceneCenter.x + 2.6f,
+            floorTranslation + g_woodRootLocalCenter.y * scale,
+            g_sceneCenter.z + 1.0f);
 }
 
 static bool IsFloorMaterial(UINT materialIndex)
@@ -638,6 +758,18 @@ bool LoadScene()
     g_matCBUpload.Reset();
     g_matCBMapped = nullptr;
     g_matCount = 0;
+    g_cerberusMesh = {};
+    g_cerberusVB.Reset();
+    g_cerberusIB.Reset();
+    g_cerberusFrameCBUpload.Reset();
+    g_cerberusFrameCBMapped = nullptr;
+    g_cerberusMatCBUpload.Reset();
+    g_woodRootMesh = {};
+    g_woodRootVB.Reset();
+    g_woodRootIB.Reset();
+    g_woodRootFrameCBUpload.Reset();
+    g_woodRootFrameCBMapped = nullptr;
+    g_woodRootMatCBUpload.Reset();
 
     const std::filesystem::path objPath = FindSponzaObj();
     if (objPath.empty())
@@ -676,9 +808,87 @@ bool LoadScene()
     g_meshIbv.SizeInBytes = ibSize;
     g_meshIbv.Format = DXGI_FORMAT_R32_UINT;
 
+    const std::filesystem::path cerberusObjPath = FindCerberusObj();
+    if (cerberusObjPath.empty())
+    {
+        MessageBoxW(
+            g_hwnd,
+            L"Не найден Cerberus_LP.obj. Запустите Blender со скриптом tools\\import_cerberus.py.",
+            L"Cerberus", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    if (!Obj::LoadObj(cerberusObjPath, g_cerberusMesh, err) ||
+        g_cerberusMesh.vertices.empty() || g_cerberusMesh.indices.empty())
+    {
+        MessageBoxW(g_hwnd, err.c_str(), L"Cerberus OBJ", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    const UINT cerberusVbSize =
+        static_cast<UINT>(g_cerberusMesh.vertices.size() * sizeof(Obj::MeshVertex));
+    const UINT cerberusIbSize =
+        static_cast<UINT>(g_cerberusMesh.indices.size() * sizeof(uint32_t));
+    g_cerberusVB = CreateUploadBuffer(g_cerberusMesh.vertices.data(), cerberusVbSize);
+    g_cerberusIB = CreateUploadBuffer(g_cerberusMesh.indices.data(), cerberusIbSize);
+    g_cerberusVbv = {
+        g_cerberusVB->GetGPUVirtualAddress(), cerberusVbSize, sizeof(Obj::MeshVertex)};
+    g_cerberusIbv = {
+        g_cerberusIB->GetGPUVirtualAddress(), cerberusIbSize, DXGI_FORMAT_R32_UINT};
+
+    XMVECTOR cerberusMin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0.0f);
+    XMVECTOR cerberusMax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0.0f);
+    for (const Obj::MeshVertex& vertex : g_cerberusMesh.vertices)
+    {
+        const XMVECTOR position = XMVectorSet(vertex.px, vertex.py, vertex.pz, 0.0f);
+        cerberusMin = XMVectorMin(cerberusMin, position);
+        cerberusMax = XMVectorMax(cerberusMax, position);
+    }
+    XMStoreFloat3(
+        &g_cerberusLocalCenter, XMVectorScale(XMVectorAdd(cerberusMin, cerberusMax), 0.5f));
+    g_cerberusLocalMinY = XMVectorGetY(cerberusMin);
+
+    const std::filesystem::path woodRootObjPath = FindWoodRootObj();
+    if (woodRootObjPath.empty())
+    {
+        MessageBoxW(
+            g_hwnd,
+            L"Не найден wood_root OBJ. Запустите Blender со скриптом tools\\import_wood_root.py.",
+            L"Wood root", MB_OK | MB_ICONERROR);
+        return false;
+    }
+    if (!Obj::LoadObj(woodRootObjPath, g_woodRootMesh, err) ||
+        g_woodRootMesh.vertices.empty() || g_woodRootMesh.indices.empty())
+    {
+        MessageBoxW(g_hwnd, err.c_str(), L"Wood root OBJ", MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    const UINT woodRootVbSize =
+        static_cast<UINT>(g_woodRootMesh.vertices.size() * sizeof(Obj::MeshVertex));
+    const UINT woodRootIbSize =
+        static_cast<UINT>(g_woodRootMesh.indices.size() * sizeof(uint32_t));
+    g_woodRootVB = CreateUploadBuffer(g_woodRootMesh.vertices.data(), woodRootVbSize);
+    g_woodRootIB = CreateUploadBuffer(g_woodRootMesh.indices.data(), woodRootIbSize);
+    g_woodRootVbv = {
+        g_woodRootVB->GetGPUVirtualAddress(), woodRootVbSize, sizeof(Obj::MeshVertex)};
+    g_woodRootIbv = {
+        g_woodRootIB->GetGPUVirtualAddress(), woodRootIbSize, DXGI_FORMAT_R32_UINT};
+
+    XMVECTOR woodRootMin = XMVectorSet(FLT_MAX, FLT_MAX, FLT_MAX, 0.0f);
+    XMVECTOR woodRootMax = XMVectorSet(-FLT_MAX, -FLT_MAX, -FLT_MAX, 0.0f);
+    for (const Obj::MeshVertex& vertex : g_woodRootMesh.vertices)
+    {
+        const XMVECTOR position = XMVectorSet(vertex.px, vertex.py, vertex.pz, 0.0f);
+        woodRootMin = XMVectorMin(woodRootMin, position);
+        woodRootMax = XMVectorMax(woodRootMax, position);
+    }
+    XMStoreFloat3(
+        &g_woodRootLocalCenter, XMVectorScale(XMVectorAdd(woodRootMin, woodRootMax), 0.5f));
+    g_woodRootLocalMinY = XMVectorGetY(woodRootMin);
+
     const std::filesystem::path mtlDir = objPath.parent_path();
     g_matSrvPairBase.assign(g_mesh.materials.size(), 0);
-    std::vector<uint8_t> matHasSpecularTex(g_mesh.materials.size(), 0);
+    std::vector<uint8_t> matHasMetallicTex(g_mesh.materials.size(), 0);
 
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[0].Get(), nullptr));
@@ -777,7 +987,7 @@ bool LoadScene()
             g_device.Get(), g_whiteTexture.Get(), g_srvHeap.Get(), materialBase + 2u, g_srvDescriptorSize);
         Tex::WriteTexture2DSrv(
             g_device.Get(), g_flatNormalTexture.Get(), g_srvHeap.Get(), materialBase + 3u, g_srvDescriptorSize);
-        matHasSpecularTex[i] = 0;
+        matHasMetallicTex[i] = 0;
     }
 
     // The two newly added folders provide complete PBR texture sets. They are
@@ -888,7 +1098,7 @@ bool LoadScene()
             slot->Ks = XMFLOAT3(mm.Ks[0], mm.Ks[1], mm.Ks[2]);
             slot->Ns = mm.Ns;
             slot->UseUvAnim = MaterialPathSuggestUvAnim(mm.diffuseMapRel) ? 1u : 0u;
-            slot->HasSpecularTex = matHasSpecularTex[i];
+            slot->HasMetallicTex = matHasMetallicTex[i];
             slot->UseSwayAnim = MaterialPathSuggestSway(mm.diffuseMapRel) ? 1u : 0u;
             slot->Metallic = 0.0f;
             slot->Roughness = std::clamp(
@@ -906,6 +1116,48 @@ bool LoadScene()
             slot->Roughness = 0.55f;
         }
     }
+
+    g_cerberusMatCBUpload = CreateUploadBuffer(nullptr, kCbAlign);
+    UINT8* cerberusMaterialMapped = nullptr;
+    ThrowIfFailed(g_cerberusMatCBUpload->Map(
+        0, &mr, reinterpret_cast<void**>(&cerberusMaterialMapped)));
+    auto* cerberusMaterial = reinterpret_cast<MatCBGPU*>(cerberusMaterialMapped);
+    std::memset(cerberusMaterial, 0, sizeof(MatCBGPU));
+    cerberusMaterial->Kd = XMFLOAT4(1.f, 1.f, 1.f, 1.f);
+    cerberusMaterial->UvScale = XMFLOAT2(1.f, 1.f);
+    cerberusMaterial->Ks = XMFLOAT3(1.f, 1.f, 1.f);
+    cerberusMaterial->Ns = 128.f;
+    cerberusMaterial->Metallic = 1.f;
+    cerberusMaterial->Roughness = 1.f;
+    cerberusMaterial->HasMetallicTex = 1u;
+    cerberusMaterial->HasNormalTex = 1u;
+    g_cerberusMatCBUpload->Unmap(0, nullptr);
+
+    g_cerberusFrameCBUpload = CreateUploadBuffer(
+        nullptr, static_cast<UINT64>(kFrameCount) * kSceneFrameCbSlots * kCbAlign);
+    ThrowIfFailed(g_cerberusFrameCBUpload->Map(
+        0, &mr, reinterpret_cast<void**>(&g_cerberusFrameCBMapped)));
+
+    g_woodRootMatCBUpload = CreateUploadBuffer(nullptr, kCbAlign);
+    UINT8* woodRootMaterialMapped = nullptr;
+    ThrowIfFailed(g_woodRootMatCBUpload->Map(
+        0, &mr, reinterpret_cast<void**>(&woodRootMaterialMapped)));
+    auto* woodRootMaterial = reinterpret_cast<MatCBGPU*>(woodRootMaterialMapped);
+    std::memset(woodRootMaterial, 0, sizeof(MatCBGPU));
+    woodRootMaterial->Kd = XMFLOAT4(1.f, 1.f, 1.f, 1.f);
+    woodRootMaterial->UvScale = XMFLOAT2(1.f, 1.f);
+    woodRootMaterial->Ks = XMFLOAT3(0.04f, 0.04f, 0.04f);
+    woodRootMaterial->Ns = 32.f;
+    woodRootMaterial->Metallic = 0.f;
+    woodRootMaterial->Roughness = 1.f;
+    woodRootMaterial->HasMetallicTex = 0u;
+    woodRootMaterial->HasNormalTex = 1u;
+    g_woodRootMatCBUpload->Unmap(0, nullptr);
+
+    g_woodRootFrameCBUpload = CreateUploadBuffer(
+        nullptr, static_cast<UINT64>(kFrameCount) * kSceneFrameCbSlots * kCbAlign);
+    ThrowIfFailed(g_woodRootFrameCBUpload->Map(
+        0, &mr, reinterpret_cast<void**>(&g_woodRootFrameCBMapped)));
 
     g_sceneReady = true;
     ComputeSceneMeasurements();
@@ -987,10 +1239,10 @@ void CreateCubes()
         material->UvScale = XMFLOAT2(1.f, 1.f);
         material->Ks = XMFLOAT3(0.12f, 0.12f, 0.12f);
         material->Ns = 24.f;
-        material->Metallic = cube == 0u ? 1.0f : 0.0f;
-        material->Roughness = cube < 2u ? 1.0f : 0.55f;
-        material->HasSpecularTex = cube == 0u ? 1u : 0u;
-        material->HasNormalTex = cube < 2u ? 1u : 0u;
+        material->Metallic = 0.0f;
+        material->Roughness = cube == 0u ? 1.0f : 0.55f;
+        material->HasMetallicTex = 0u;
+        material->HasNormalTex = cube == 0u ? 1u : 0u;
     }
 
     const UINT vbSize = static_cast<UINT>(vertices.size() * sizeof(Obj::MeshVertex));
@@ -1039,6 +1291,32 @@ UINT8* CubeFrameCbMapped(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
 D3D12_GPU_VIRTUAL_ADDRESS CubeFrameCbAddress(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
 {
     return g_cubeFrameCBUpload->GetGPUVirtualAddress()
+        + (static_cast<UINT64>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+UINT8* CerberusFrameCbMapped(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_cerberusFrameCBMapped
+        + (static_cast<size_t>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS CerberusFrameCbAddress(
+    UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_cerberusFrameCBUpload->GetGPUVirtualAddress()
+        + (static_cast<UINT64>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+UINT8* WoodRootFrameCbMapped(UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_woodRootFrameCBMapped
+        + (static_cast<size_t>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
+}
+
+D3D12_GPU_VIRTUAL_ADDRESS WoodRootFrameCbAddress(
+    UINT frameIndex, UINT slot = kGeometryFrameCbSlot)
+{
+    return g_woodRootFrameCBUpload->GetGPUVirtualAddress()
         + (static_cast<UINT64>(frameIndex) * kSceneFrameCbSlots + slot) * kCbAlign;
 }
 
@@ -1176,6 +1454,65 @@ void DrawScene(const XMMATRIX& viewProj)
     }
 }
 
+void DrawCerberus(const XMMATRIX& viewProj)
+{
+    if (!g_cerberusVB || !g_cerberusIB || !g_cerberusMatCBUpload ||
+        !g_cerberusFrameCBUpload)
+        return;
+
+    ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
+    g_cmdList->SetDescriptorHeaps(1, heaps);
+    g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
+    g_cmdList->SetPipelineState(g_pipelineGeo.Get());
+
+    WriteFrameCBTo(
+        CerberusFrameCbMapped(g_frameIndex), CerberusWorldTransform(), viewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, CerberusFrameCbAddress(g_frameIndex));
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        1, g_cerberusMatCBUpload->GetGPUVirtualAddress());
+
+    D3D12_GPU_DESCRIPTOR_HANDLE materialTable =
+        g_srvHeap->GetGPUDescriptorHandleForHeapStart();
+    materialTable.ptr +=
+        static_cast<SIZE_T>(kCerberusMaterialSrvBase) * g_srvDescriptorSize;
+    g_cmdList->SetGraphicsRootDescriptorTable(2, materialTable);
+    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_cmdList->IASetVertexBuffers(0, 1, &g_cerberusVbv);
+    g_cmdList->IASetIndexBuffer(&g_cerberusIbv);
+    g_cmdList->DrawIndexedInstanced(
+        static_cast<UINT>(g_cerberusMesh.indices.size()), 1, 0, 0, 0);
+}
+
+void DrawWoodRoot(const XMMATRIX& viewProj)
+{
+    if (!g_woodRootVB || !g_woodRootIB || !g_woodRootMatCBUpload ||
+        !g_woodRootFrameCBUpload)
+        return;
+
+    ID3D12DescriptorHeap* heaps[] = {g_srvHeap.Get()};
+    g_cmdList->SetDescriptorHeaps(1, heaps);
+    g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
+    g_cmdList->SetPipelineState(g_pipelineGeo.Get());
+
+    WriteFrameCBTo(
+        WoodRootFrameCbMapped(g_frameIndex), WoodRootWorldTransform(), viewProj, g_appTime);
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        0, WoodRootFrameCbAddress(g_frameIndex));
+    g_cmdList->SetGraphicsRootConstantBufferView(
+        1, g_woodRootMatCBUpload->GetGPUVirtualAddress());
+
+    D3D12_GPU_DESCRIPTOR_HANDLE materialTable =
+        g_srvHeap->GetGPUDescriptorHandleForHeapStart();
+    materialTable.ptr += static_cast<SIZE_T>(kWoodMaterialSrvBase) * g_srvDescriptorSize;
+    g_cmdList->SetGraphicsRootDescriptorTable(2, materialTable);
+    g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    g_cmdList->IASetVertexBuffers(0, 1, &g_woodRootVbv);
+    g_cmdList->IASetIndexBuffer(&g_woodRootIbv);
+    g_cmdList->DrawIndexedInstanced(
+        static_cast<UINT>(g_woodRootMesh.indices.size()), 1, 0, 0, 0);
+}
+
 void DrawCubes(const XMMATRIX& viewProj)
 {
     if (!g_cubeVB || !g_cubeIB || !g_cubeMatCBUpload)
@@ -1196,10 +1533,6 @@ void DrawCubes(const XMMATRIX& viewProj)
     for (UINT cube = 0; cube < kCubeCount; ++cube)
     {
         UINT materialSrvBase = 0;
-        if (cube == 0u)
-            materialSrvBase = kCerberusMaterialSrvBase;
-        else if (cube == 1u)
-            materialSrvBase = kWoodMaterialSrvBase;
         D3D12_GPU_DESCRIPTOR_HANDLE materialTable =
             g_srvHeap->GetGPUDescriptorHandleForHeapStart();
         materialTable.ptr += static_cast<SIZE_T>(materialSrvBase) * g_srvDescriptorSize;
@@ -1232,6 +1565,38 @@ void DrawSceneDepth(const XMMATRIX& lightViewProj, UINT cascadeIndex)
         g_cmdList->SetGraphicsRootConstantBufferView(
             1, g_matCBUpload->GetGPUVirtualAddress() + static_cast<UINT64>(sm.materialIndex) * kCbAlign);
         g_cmdList->DrawIndexedInstanced(sm.indexCount, 1, sm.indexStart, 0, 0);
+    }
+
+    if (g_cerberusVB && g_cerberusIB && g_cerberusMatCBUpload &&
+        g_cerberusFrameCBUpload)
+    {
+        WriteFrameCBTo(
+            CerberusFrameCbMapped(g_frameIndex, cascadeIndex), CerberusWorldTransform(),
+            lightViewProj, g_appTime);
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            0, CerberusFrameCbAddress(g_frameIndex, cascadeIndex));
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            1, g_cerberusMatCBUpload->GetGPUVirtualAddress());
+        g_cmdList->IASetVertexBuffers(0, 1, &g_cerberusVbv);
+        g_cmdList->IASetIndexBuffer(&g_cerberusIbv);
+        g_cmdList->DrawIndexedInstanced(
+            static_cast<UINT>(g_cerberusMesh.indices.size()), 1, 0, 0, 0);
+    }
+
+    if (g_woodRootVB && g_woodRootIB && g_woodRootMatCBUpload &&
+        g_woodRootFrameCBUpload)
+    {
+        WriteFrameCBTo(
+            WoodRootFrameCbMapped(g_frameIndex, cascadeIndex), WoodRootWorldTransform(),
+            lightViewProj, g_appTime);
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            0, WoodRootFrameCbAddress(g_frameIndex, cascadeIndex));
+        g_cmdList->SetGraphicsRootConstantBufferView(
+            1, g_woodRootMatCBUpload->GetGPUVirtualAddress());
+        g_cmdList->IASetVertexBuffers(0, 1, &g_woodRootVbv);
+        g_cmdList->IASetIndexBuffer(&g_woodRootIbv);
+        g_cmdList->DrawIndexedInstanced(
+            static_cast<UINT>(g_woodRootMesh.indices.size()), 1, 0, 0, 0);
     }
 
     // The cube field is part of the visible scene, so it must also be present
@@ -1316,6 +1681,8 @@ void DrawFrame(float dt)
     g_cmdList->RSSetScissorRects(1, &scissor);
 
     DrawScene(viewProj);
+    DrawCerberus(viewProj);
+    DrawWoodRoot(viewProj);
     DrawCubes(viewProj);
     g_particleSys.UpdateAndDraw(
         g_cmdList.Get(), g_srvHeap.Get(), g_frameIndex, dt, g_appTime, view, viewProj,

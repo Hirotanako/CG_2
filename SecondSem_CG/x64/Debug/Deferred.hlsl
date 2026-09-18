@@ -17,7 +17,7 @@ cbuffer MatCB : register(b1)
     float3 Ks;
     float Ns;
     uint UseUvAnim;
-    uint HasSpecularTex;
+    uint HasMetallicTex;
     uint UseSwayAnim;
     float Metallic;
     float Roughness;
@@ -104,9 +104,11 @@ GeoRtOut GeometryPS(GeoVsOut input)
     float2 uv = input.uv * UvScale + UvOffset;
     if (UseUvAnim != 0)
         uv += UvAnimAndPad.xy * time;
-    float3 a = Albedo.Sample(Samp, uv).rgb * Kd.rgb;
+    // Base-color images are authored in sRGB, while all BRDF math must happen
+    // in linear space. Metallic, roughness and normals remain linear data.
+    float3 a = pow(saturate(Albedo.Sample(Samp, uv).rgb), 2.2) * Kd.rgb;
     float metallic = saturate(Metallic);
-    if (HasSpecularTex != 0)
+    if (HasMetallicTex != 0)
         metallic = saturate(metallic * MetallicMap.Sample(Samp, uv).r);
     float roughness = clamp(Roughness * RoughnessMap.Sample(Samp, uv).r, 0.045, 1.0);
 
@@ -118,8 +120,12 @@ GeoRtOut GeometryPS(GeoVsOut input)
         float3 dpdy = ddy(input.posW);
         float2 duvdx = ddx(uv);
         float2 duvdy = ddy(uv);
-        float3 tangent = normalize(dpdx * duvdy.y - dpdy * duvdx.y);
-        float3 bitangent = normalize(-dpdx * duvdy.x + dpdy * duvdx.x);
+        float determinant = duvdx.x * duvdy.y - duvdx.y * duvdy.x;
+        float inverseDeterminant = sign(determinant) / max(abs(determinant), 1e-8);
+        float3 tangent = (dpdx * duvdy.y - dpdy * duvdx.y) * inverseDeterminant;
+        tangent = normalize(tangent - normalW * dot(normalW, tangent));
+        float3 bitangent = normalize(
+            (-dpdx * duvdy.x + dpdy * duvdx.x) * inverseDeterminant);
         normalW = normalize(
             tangent * tangentNormal.x + bitangent * tangentNormal.y + normalW * tangentNormal.z);
     }

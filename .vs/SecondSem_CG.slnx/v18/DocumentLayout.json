@@ -1,13 +1,33 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\",
+  "WorkspaceRootPath": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Deferred.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\TextureUtil.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\TextureUtil.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ParticleSystem.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\ParticleSystem.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ObjLoader.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\ObjLoader.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\GBuffer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Deferred.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\Deferred.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
     },
     {
-      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Particles.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Particles.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
       "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\Particles.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
     }
   ],
@@ -23,23 +43,83 @@
             {
               "$type": "Document",
               "DocumentIndex": 0,
-              "Title": "Deferred.hlsl",
-              "DocumentMoniker": "C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Deferred.hlsl",
-              "RelativeDocumentMoniker": "SecondSem_CG\\Deferred.hlsl",
-              "ToolTip": "C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Deferred.hlsl",
-              "RelativeToolTip": "SecondSem_CG\\Deferred.hlsl",
-              "ViewState": "AgIAAAAAAAAAAAAAAAAAACYAAAAaAAAAAAAAAA==",
-              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
-              "WhenOpened": "2026-09-11T17:19:33.56Z",
+              "Title": "SecondSem_CG.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\SecondSem_CG.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp",
+              "RelativeToolTip": "SecondSem_CG\\SecondSem_CG.cpp",
+              "ViewState": "AgIAAN0EAAAAAAAAAAAcwPsEAAAbAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-09-18T13:38:30.037Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
               "DocumentIndex": 1,
+              "Title": "TextureUtil.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\TextureUtil.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\TextureUtil.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\TextureUtil.cpp",
+              "RelativeToolTip": "SecondSem_CG\\TextureUtil.cpp",
+              "ViewState": "AgIAAG8CAAAAAAAAAAAcwI0CAABhAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-09-18T12:17:29.421Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "ParticleSystem.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ParticleSystem.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\ParticleSystem.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ParticleSystem.cpp",
+              "RelativeToolTip": "SecondSem_CG\\ParticleSystem.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-09-18T12:16:47.868Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
+              "Title": "ObjLoader.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ObjLoader.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\ObjLoader.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\ObjLoader.cpp",
+              "RelativeToolTip": "SecondSem_CG\\ObjLoader.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-09-18T12:16:43.191Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "GBuffer.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\GBuffer.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\GBuffer.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\GBuffer.cpp",
+              "RelativeToolTip": "SecondSem_CG\\GBuffer.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-09-18T12:16:38.335Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "Deferred.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Deferred.hlsl",
+              "RelativeDocumentMoniker": "SecondSem_CG\\Deferred.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Deferred.hlsl",
+              "RelativeToolTip": "SecondSem_CG\\Deferred.hlsl",
+              "ViewState": "AgIAAB0BAAAAAAAAAAAcwD0BAAApAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-09-11T17:19:33.56Z"
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 6,
               "Title": "Particles.hlsl",
-              "DocumentMoniker": "C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Particles.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Particles.hlsl",
               "RelativeDocumentMoniker": "SecondSem_CG\\Particles.hlsl",
-              "ToolTip": "C:\\Users\\JdasK\\source\\repos\\SecondSem_CG\\CG_2\\SecondSem_CG\\Particles.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Downloads\\CG_2-main\\CG_2-main\\SecondSem_CG\\Particles.hlsl",
               "RelativeToolTip": "SecondSem_CG\\Particles.hlsl",
               "ViewState": "AgIAACEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
