@@ -19,6 +19,7 @@
 #include "RenderingSystem.h"
 #include "ShadowSystem.h"
 #include "TerrainSystem.h"
+#include "TemporalAA.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
@@ -57,25 +58,35 @@ constexpr UINT kParticleSrvBase = 420;
 constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kIblSrvBase = 410;
 constexpr UINT kShadowOverlaySrvBase = 411;
+// ParticleSystem owns 420..435 (four directions * four descriptors).
+// Keep the temporal textures in a disjoint descriptor range.
+constexpr UINT kTaaCurrentSrv = 440;
+constexpr UINT kTaaHistorySrv0 = 441;
+constexpr UINT kTaaHistorySrv1 = 442;
+constexpr UINT kMotionSrv = 443;
 // Chromatic aberration was the only post effect. Render lighting straight to
 // the swap-chain target to keep terrain silhouettes and colour bands crisp.
 constexpr bool kPostProcessEnabled = false;
 constexpr bool kShadowOverlayEnabled = false;
 constexpr UINT kCerberusMaterialSrvBase = 380;
 constexpr UINT kWoodMaterialSrvBase = 384;
-constexpr UINT kCbAlign = 256;
+constexpr UINT kCbAlign = 512;
 constexpr UINT kCubeCount = 1000;
 
 struct alignas(256) FrameCB
 {
     XMFLOAT4X4 World;
     XMFLOAT4X4 ViewProj;
+    XMFLOAT4X4 PrevWorld;
+    XMFLOAT4X4 ViewProjNoJitter;
+    XMFLOAT4X4 PrevViewProjNoJitter;
     XMFLOAT4 TimeCamPos;
     XMFLOAT4 UvAnimAndPad;
-    float _PadRest[24];
+    XMFLOAT4 PrevTimeAndPad;
+    float _PadRest[36];
 };
 
-static_assert(sizeof(FrameCB) == 256);
+static_assert(sizeof(FrameCB) == 512);
 
 struct alignas(256) MatCBGPU
 {
@@ -130,6 +141,7 @@ ShadowSystem g_shadowSys;
 ParticleSystem g_particleSys;
 PostProcessSystem g_postProcessSys;
 TerrainSystem g_terrainSys;
+TemporalAA g_temporalAA;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -187,6 +199,12 @@ UINT8* g_cubeMatCBMapped = nullptr;
 
 UINT g_frameIndex = 0;
 float g_appTime = 0.0f;
+float g_previousAppTime = 0.0f;
+uint32_t g_temporalSample = 0;
+XMMATRIX g_currentViewProjNoJitter = XMMatrixIdentity();
+XMMATRIX g_previousViewProjNoJitter = XMMatrixIdentity();
+XMFLOAT2 g_currentJitterUv{};
+XMFLOAT2 g_previousJitterUv{};
 
 XMFLOAT3 g_camPos{0.0f, 1.4f, 4.5f};
 float g_camYaw = 0.0f;
@@ -241,6 +259,11 @@ std::wstring PostProcessShaderPath()
 std::wstring TerrainShaderPath()
 {
     return ExeDirectory() + L"Terrain.hlsl";
+}
+
+std::wstring TemporalShaderPath()
+{
+    return ExeDirectory() + L"TemporalAA.hlsl";
 }
 
 std::filesystem::path FindHighDirectory()
@@ -364,6 +387,9 @@ void ResizeSwapChain(UINT w, UINT h)
     {
         g_renderSys.Resize(
             g_device.Get(), w, h, g_srvHeap.Get(), g_srvDescriptorSize);
+        g_renderSys.GBufferTargets().CreateMotionVectorSrv(
+            g_device.Get(), g_srvHeap.Get(), kMotionSrv, g_srvDescriptorSize);
+        g_temporalAA.Resize(g_device.Get(), w, h, g_srvHeap.Get());
         if (kPostProcessEnabled)
             g_postProcessSys.Resize(g_device.Get(), w, h, g_srvHeap.Get());
     }
@@ -484,10 +510,11 @@ void CreateGeometryPipeline()
     pso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     pso.SampleMask = UINT_MAX;
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    pso.NumRenderTargets = 3;
+    pso.NumRenderTargets = 4;
     pso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     pso.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     pso.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    pso.RTVFormats[3] = DXGI_FORMAT_R16G16_FLOAT;
     pso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     pso.SampleDesc.Count = 1;
     pso.InputLayout = {layout, _countof(layout)};
@@ -679,8 +706,10 @@ XMMATRIX MeshWorldTransform()
     return XMMatrixScaling(0.01f, 0.01f, 0.01f);
 }
 
-XMMATRIX CerberusWorldTransform()
+XMMATRIX CerberusWorldTransform(float timeSec = -1.0f)
 {
+    if (timeSec < 0.0f)
+        timeSec = g_appTime;
     constexpr float scale = 2.2f;
     constexpr float floorSink = 0.18f;
     const float floorTranslation =
@@ -690,7 +719,8 @@ XMMATRIX CerberusWorldTransform()
     return XMMatrixTranslation(
                -g_cerberusLocalCenter.x, -g_cerberusLocalCenter.y, -g_cerberusLocalCenter.z)
         * XMMatrixScaling(scale, scale, scale)
-        * XMMatrixRotationY(XM_PIDIV2)
+        // A visible moving object for validating object motion vectors.
+        * XMMatrixRotationY(XM_PIDIV2 + std::sin(timeSec * 0.75f) * 0.32f)
         * XMMatrixTranslation(
             g_sceneCenter.x, floorTranslation + g_cerberusLocalCenter.y * scale,
             g_sceneCenter.z + 1.0f);
@@ -1281,15 +1311,24 @@ void CreateCubes()
         0, &noRead, reinterpret_cast<void**>(&g_cubeFrameCBMapped)));
 }
 
-void WriteFrameCBTo(UINT8* destination, const XMMATRIX& world, const XMMATRIX& viewProj, float timeSec)
+void WriteFrameCBTo(
+    UINT8* destination,
+    const XMMATRIX& world,
+    const XMMATRIX& viewProj,
+    float timeSec,
+    const XMMATRIX* previousWorld = nullptr)
 {
     FrameCB data{};
     XMStoreFloat4x4(&data.World, world);
     XMStoreFloat4x4(&data.ViewProj, viewProj);
+    XMStoreFloat4x4(&data.PrevWorld, previousWorld ? *previousWorld : world);
+    XMStoreFloat4x4(&data.ViewProjNoJitter, g_currentViewProjNoJitter);
+    XMStoreFloat4x4(&data.PrevViewProjNoJitter, g_previousViewProjNoJitter);
     data.TimeCamPos =
         XMFLOAT4(timeSec, g_camPos.x, g_camPos.y, g_camPos.z);
     // xy = UV scroll; z = sway amplitude (local OBJ units); w = sway speed scale
     data.UvAnimAndPad = XMFLOAT4(0.035f, 0.022f, 5.5f, 1.0f);
+    data.PrevTimeAndPad = XMFLOAT4(g_previousAppTime, 0.0f, 0.0f, 0.0f);
     std::memcpy(destination, &data, sizeof(FrameCB));
 }
 
@@ -1356,6 +1395,29 @@ XMMATRIX CalcProj()
 {
     const float aspect = static_cast<float>(g_width) / static_cast<float>((std::max)(1u, g_height));
     return XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, ShadowSystem::kCameraNear, ShadowSystem::kCameraFar);
+}
+
+float Halton(uint32_t index, uint32_t base)
+{
+    float result = 0.0f;
+    float fraction = 1.0f;
+    while (index > 0)
+    {
+        fraction /= static_cast<float>(base);
+        result += fraction * static_cast<float>(index % base);
+        index /= base;
+    }
+    return result;
+}
+
+XMMATRIX ApplyProjectionJitter(const XMMATRIX& projection, const XMFLOAT2& jitterUv)
+{
+    XMMATRIX jittered = projection;
+    // Row-vector DirectX projection: _31/_32 shift NDC. Y is inverted when
+    // NDC is converted to texture UV, hence the negative vertical sign.
+    jittered.r[2] = XMVectorAdd(
+        jittered.r[2], XMVectorSet(jitterUv.x * 2.0f, -jitterUv.y * 2.0f, 0.0f, 0.0f));
+    return jittered;
 }
 
 XMMATRIX CalcViewProj()
@@ -1488,8 +1550,10 @@ void DrawCerberus(const XMMATRIX& viewProj)
     g_cmdList->SetGraphicsRootSignature(g_rootSignature.Get());
     g_cmdList->SetPipelineState(g_pipelineGeo.Get());
 
+    const XMMATRIX currentWorld = CerberusWorldTransform(g_appTime);
+    const XMMATRIX previousWorld = CerberusWorldTransform(g_previousAppTime);
     WriteFrameCBTo(
-        CerberusFrameCbMapped(g_frameIndex), CerberusWorldTransform(), viewProj, g_appTime);
+        CerberusFrameCbMapped(g_frameIndex), currentWorld, viewProj, g_appTime, &previousWorld);
     g_cmdList->SetGraphicsRootConstantBufferView(
         0, CerberusFrameCbAddress(g_frameIndex));
     g_cmdList->SetGraphicsRootConstantBufferView(
@@ -1661,6 +1725,9 @@ void DrawFrame(float dt)
         const float linearSpeed = XMVectorGetX(XMVector3Length(cameraDelta)) / dt;
         const float yawDelta = g_camYaw - previousCameraYaw;
         const float pitchDelta = g_camPitch - previousCameraPitch;
+        if (XMVectorGetX(XMVector3Length(cameraDelta)) > 5.0f ||
+            std::abs(yawDelta) > 0.75f || std::abs(pitchDelta) > 0.75f)
+            g_temporalAA.Invalidate();
         const float angularSpeed = std::sqrt(yawDelta * yawDelta + pitchDelta * pitchDelta) / dt;
         // Camera rotation is motion too. Convert radians/s to an equivalent
         // linear speed so looking around also drives the post-process effect.
@@ -1668,11 +1735,29 @@ void DrawFrame(float dt)
         const float smoothing = 1.0f - std::exp(-10.0f * dt);
         g_smoothedCameraSpeed += (cameraSpeed - g_smoothedCameraSpeed) * smoothing;
     }
+    g_previousAppTime = g_appTime;
     g_appTime += dt;
 
     const XMMATRIX view = CalcView();
     const XMMATRIX proj = CalcProj();
-    const XMMATRIX viewProj = view * proj;
+    g_currentViewProjNoJitter = view * proj;
+    g_previousJitterUv = g_currentJitterUv;
+    if (g_temporalAA.Enabled())
+    {
+        const uint32_t sampleIndex = (g_temporalSample++ % 16u) + 1u;
+        g_currentJitterUv = XMFLOAT2(
+            (Halton(sampleIndex, 2) - 0.5f) / static_cast<float>((std::max)(1u, g_width)),
+            (Halton(sampleIndex, 3) - 0.5f) / static_cast<float>((std::max)(1u, g_height)));
+    }
+    else
+    {
+        g_currentJitterUv = XMFLOAT2(0.0f, 0.0f);
+        g_previousJitterUv = g_currentJitterUv;
+    }
+    if (g_temporalSample <= 1u)
+        g_previousViewProjNoJitter = g_currentViewProjNoJitter;
+    const XMMATRIX jitteredProj = ApplyProjectionJitter(proj, g_currentJitterUv);
+    const XMMATRIX viewProj = view * jitteredProj;
 
     g_shadowSys.UpdateCascades(
         g_frameIndex, view, proj, g_camPos, g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
@@ -1707,7 +1792,9 @@ void DrawFrame(float dt)
     DrawCerberus(viewProj);
     DrawWoodRoot(viewProj);
     DrawCubes(viewProj);
-    g_terrainSys.Draw(g_cmdList.Get(), g_frameIndex, view, proj, g_camPos);
+    g_terrainSys.Draw(
+        g_cmdList.Get(), g_frameIndex, view, jitteredProj,
+        g_currentViewProjNoJitter, g_previousViewProjNoJitter, g_camPos);
     g_particleSys.UpdateAndDraw(
         g_cmdList.Get(), g_srvHeap.Get(), g_frameIndex, dt, g_appTime, view, viewProj,
         g_camPos, ParticleEmitterPosition(), g_particleFloorY);
@@ -1724,16 +1811,15 @@ void DrawFrame(float dt)
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
     g_renderSys.UploadFrameConstants(g_frameIndex, g_camPos, g_width, g_height);
-    const D3D12_CPU_DESCRIPTOR_HANDLE lightingRtv = kPostProcessEnabled
-        ? g_postProcessSys.BeginScene(g_cmdList.Get())
+    const D3D12_CPU_DESCRIPTOR_HANDLE lightingRtv = g_temporalAA.Enabled()
+        ? g_temporalAA.BeginCurrent(g_cmdList.Get())
         : rtv;
     g_renderSys.DrawLightingPass(
         g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, lightingRtv, g_width, g_height);
-    if (kPostProcessEnabled)
-    {
-        g_postProcessSys.Apply(
-            g_cmdList.Get(), g_srvHeap.Get(), rtv, g_width, g_height, g_smoothedCameraSpeed);
-    }
+    if (g_temporalAA.Enabled())
+        g_temporalAA.Resolve(
+            g_cmdList.Get(), g_srvHeap.Get(), rtv, kMotionSrv,
+            g_currentJitterUv, g_previousJitterUv);
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1753,18 +1839,20 @@ void DrawFrame(float dt)
         wchar_t title[256]{};
         swprintf_s(
             title,
-            L"CG2 Terrain | V: wireframe [%s] | C: culling [%s] | nodes: %u | triangles: %u | culled subtrees: %u",
+            L"CG2 | T: TAA [%s] | M: motion [%s] | V: wire [%s] | C: culling [%s] | nodes: %u | triangles: %u",
+            g_temporalAA.Enabled() ? L"ON" : L"OFF",
+            g_temporalAA.MotionDebugEnabled() ? L"ON" : L"OFF",
             g_terrainSys.WireframeEnabled() ? L"ON" : L"OFF",
             g_terrainSys.CullingEnabled() ? L"ON" : L"OFF",
             stats.submittedNodes,
-            stats.submittedTriangles,
-            stats.culledSubtrees);
+            stats.submittedTriangles);
         SetWindowTextW(g_hwnd, title);
     }
 
     const UINT64 signalValue = ++g_fenceValue;
     ThrowIfFailed(g_queue->Signal(g_fence.Get(), signalValue));
     g_frameFenceValues[g_frameIndex] = signalValue;
+    g_previousViewProjNoJitter = g_currentViewProjNoJitter;
 }
 
 void InitD3D(HWND hwnd)
@@ -1851,6 +1939,12 @@ void InitD3D(HWND hwnd)
         kIblSrvBase,
         g_srvDescriptorSize,
         DeferredShaderPath().c_str());
+    g_renderSys.GBufferTargets().CreateMotionVectorSrv(
+        g_device.Get(), g_srvHeap.Get(), kMotionSrv, g_srvDescriptorSize);
+    g_temporalAA.Init(
+        g_device.Get(), g_width, g_height, g_srvHeap.Get(),
+        kTaaCurrentSrv, kTaaHistorySrv0, kTaaHistorySrv1,
+        g_srvDescriptorSize, TemporalShaderPath().c_str());
     g_shadowSys.Init(
         g_device.Get(),
         g_srvHeap.Get(),
@@ -1910,6 +2004,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 g_terrainSys.ToggleWireframe();
             else if (wp == 'C')
                 g_terrainSys.ToggleCulling();
+            else if (wp == 'T')
+                g_temporalAA.Toggle();
+            else if (wp == 'M')
+                g_temporalAA.ToggleMotionDebug();
         }
         return 0;
     case WM_SIZE:

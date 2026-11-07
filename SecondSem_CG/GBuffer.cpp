@@ -26,6 +26,7 @@ void GBuffer::DestroySizeDependent()
     m_albedo.Reset();
     m_normal.Reset();
     m_position.Reset();
+    m_motion.Reset();
     m_depth.Reset();
 }
 
@@ -64,6 +65,7 @@ void GBuffer::CreateTargets(ID3D12Device* device, UINT width, UINT height)
     makeColor(DXGI_FORMAT_R8G8B8A8_UNORM, m_albedo);
     makeColor(DXGI_FORMAT_R16G16B16A16_FLOAT, m_normal);
     makeColor(DXGI_FORMAT_R16G16B16A16_FLOAT, m_position);
+    makeColor(DXGI_FORMAT_R16G16_FLOAT, m_motion);
 
     D3D12_RESOURCE_DESC ds{};
     ds.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -98,6 +100,12 @@ void GBuffer::CreateTargets(ID3D12Device* device, UINT width, UINT height)
     rp.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     rp.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
     device->CreateRenderTargetView(m_position.Get(), &rp, rBase);
+    rBase.ptr += static_cast<SIZE_T>(m_rtvInc);
+
+    D3D12_RENDER_TARGET_VIEW_DESC rm{};
+    rm.Format = DXGI_FORMAT_R16G16_FLOAT;
+    rm.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+    device->CreateRenderTargetView(m_motion.Get(), &rm, rBase);
 
     D3D12_DEPTH_STENCIL_VIEW_DESC dsv{};
     dsv.Format = DXGI_FORMAT_D32_FLOAT;
@@ -146,22 +154,24 @@ static D3D12_RESOURCE_BARRIER Transition(
 
 void GBuffer::TransitionToRenderTargets(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER bars[3] = {
+    D3D12_RESOURCE_BARRIER bars[4] = {
         Transition(m_albedo.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         Transition(m_normal.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         Transition(m_position.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        Transition(m_motion.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
     };
-    cmd->ResourceBarrier(3, bars);
+    cmd->ResourceBarrier(4, bars);
 }
 
 void GBuffer::TransitionToShaderResource(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER bars[3] = {
+    D3D12_RESOURCE_BARRIER bars[4] = {
         Transition(m_albedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         Transition(m_normal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         Transition(m_position.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        Transition(m_motion.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
-    cmd->ResourceBarrier(3, bars);
+    cmd->ResourceBarrier(4, bars);
 }
 
 void GBuffer::ClearAndSetAsRenderTarget(ID3D12GraphicsCommandList* cmd, const float clearRgb[4])
@@ -172,7 +182,11 @@ void GBuffer::ClearAndSetAsRenderTarget(ID3D12GraphicsCommandList* cmd, const fl
     {
         rtvs[i] = h;
         h.ptr += static_cast<SIZE_T>(m_rtvInc);
-        const float cc[4] = {clearRgb[0], clearRgb[1], clearRgb[2], 1.0f};
+        const float cc[4] = {
+            i == 0 ? clearRgb[0] : 0.0f,
+            i == 0 ? clearRgb[1] : 0.0f,
+            i == 0 ? clearRgb[2] : 0.0f,
+            i == 0 ? 1.0f : 0.0f};
         cmd->ClearRenderTargetView(rtvs[i], cc, 0, nullptr);
     }
     D3D12_CPU_DESCRIPTOR_HANDLE dsv = m_dsvHeap->GetCPUDescriptorHandleForHeapStart();
@@ -202,6 +216,22 @@ void GBuffer::CreateShaderResourceViews(
     makeSrv(m_albedo.Get(), DXGI_FORMAT_R8G8B8A8_UNORM);
     makeSrv(m_normal.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
     makeSrv(m_position.Get(), DXGI_FORMAT_R16G16B16A16_FLOAT);
+}
+
+void GBuffer::CreateMotionVectorSrv(
+    ID3D12Device* device,
+    ID3D12DescriptorHeap* srvHeap,
+    UINT heapIndex,
+    UINT srvDescriptorSize)
+{
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+    handle.ptr += static_cast<SIZE_T>(heapIndex) * srvDescriptorSize;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R16G16_FLOAT;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_motion.Get(), &srv, handle);
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE GBuffer::RtvCpuHandle(size_t index) const

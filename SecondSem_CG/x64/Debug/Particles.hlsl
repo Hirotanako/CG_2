@@ -136,6 +136,7 @@ struct ParticleGBufferOut
     float4 albedo : SV_Target0;
     float4 normal : SV_Target1;
     float4 position : SV_Target2;
+    float2 motion : SV_Target3;
 };
 
 ParticleGBufferOut ParticlePS(ParticleGsOut input)
@@ -165,5 +166,8 @@ ParticleGBufferOut ParticlePS(ParticleGsOut input)
     output.albedo = float4(input.color.rgb, 0.0); // dielectric metallic value
     output.normal = float4(normalize(input.normal), 0.65); // PBR roughness
     output.position = float4(input.worldPosition, 1.0);
+    // Particles reject history locally; their simulation does not retain a
+    // stable previous-particle identity.
+    output.motion = float2(2.0, 2.0);
     return output;
 }

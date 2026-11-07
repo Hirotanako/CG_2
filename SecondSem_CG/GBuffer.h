@@ -18,6 +18,12 @@ public:
         UINT srvStartIndex,
         UINT srvDescriptorSize);
 
+    void CreateMotionVectorSrv(
+        ID3D12Device* device,
+        ID3D12DescriptorHeap* srvHeap,
+        UINT heapIndex,
+        UINT srvDescriptorSize);
+
     void TransitionToRenderTargets(ID3D12GraphicsCommandList* cmd);
     void TransitionToShaderResource(ID3D12GraphicsCommandList* cmd);
 
@@ -41,6 +47,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource> m_albedo;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_normal;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_position;
+    Microsoft::WRL::ComPtr<ID3D12Resource> m_motion;
     Microsoft::WRL::ComPtr<ID3D12Resource> m_depth;
 
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> m_rtvHeap;
@@ -50,6 +57,6 @@ private:
 
     enum : int
     {
-        kRtvCount = 3
+        kRtvCount = 4
     };
 };

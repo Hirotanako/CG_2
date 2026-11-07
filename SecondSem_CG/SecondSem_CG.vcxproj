@@ -90,7 +90,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)TemporalAA.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
@@ -110,7 +110,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)TemporalAA.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -128,7 +128,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)TemporalAA.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -148,7 +148,7 @@
       <AdditionalLibraryDirectories>$(LibraryPath);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
     <PostBuildEvent>
-      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
+      <Command>copy /Y "$(ProjectDir)Shaders.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Deferred.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Particles.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)PostProcess.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)Terrain.hlsl" "$(OutDir)" &amp;&amp; copy /Y "$(ProjectDir)TemporalAA.hlsl" "$(OutDir)" &amp;&amp; xcopy /E /I /Y "$(ProjectDir)..\High" "$(OutDir)High"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -161,6 +161,7 @@
     <ClCompile Include="ParticleSystem.cpp" />
     <ClCompile Include="PostProcessSystem.cpp" />
     <ClCompile Include="TerrainSystem.cpp" />
+    <ClCompile Include="TemporalAA.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Shaders.hlsl" />
@@ -168,11 +169,13 @@
     <None Include="Particles.hlsl" />
     <None Include="PostProcess.hlsl" />
     <None Include="Terrain.hlsl" />
+    <None Include="TemporalAA.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ParticleSystem.h" />
     <ClInclude Include="PostProcessSystem.h" />
     <ClInclude Include="TerrainSystem.h" />
+    <ClInclude Include="TemporalAA.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

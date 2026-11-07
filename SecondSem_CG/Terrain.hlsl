@@ -3,9 +3,11 @@
 cbuffer TerrainFrame : register(b0)
 {
     row_major float4x4 ViewProjection;
+    row_major float4x4 ViewProjectionNoJitter;
+    row_major float4x4 PreviousViewProjectionNoJitter;
     float4 CameraAndMinHeight;
     float4 HeightRangeAndPad;
-    float4 Padding[10];
+    float4 Padding[2];
 };
 
 struct VsIn
@@ -24,6 +26,7 @@ struct VsOut
     float3 worldNormal : NORMAL;
     float4 baseMaterial : COLOR0;
     float4 surfaceMaterial : COLOR1;
+    float2 motion : TEXCOORD1;
 };
 
 VsOut TerrainVS(VsIn input)
@@ -34,6 +37,11 @@ VsOut TerrainVS(VsIn input)
     output.worldNormal = input.normal;
     output.baseMaterial = input.baseMaterial;
     output.surfaceMaterial = input.surfaceMaterial;
+    float4 currentNoJitter = mul(float4(input.position, 1.0), ViewProjectionNoJitter);
+    float4 previousNoJitter = mul(float4(input.position, 1.0), PreviousViewProjectionNoJitter);
+    float2 currentUv = currentNoJitter.xy / currentNoJitter.w * float2(0.5, -0.5) + 0.5;
+    float2 previousUv = previousNoJitter.xy / previousNoJitter.w * float2(0.5, -0.5) + 0.5;
+    output.motion = currentUv - previousUv;
     return output;
 }
 
@@ -42,6 +50,7 @@ struct GBufferOut
     float4 albedo : SV_Target0;
     float4 normal : SV_Target1;
     float4 position : SV_Target2;
+    float2 motion : SV_Target3;
 };
 
 GBufferOut TerrainPS(VsOut input)
@@ -65,5 +74,6 @@ GBufferOut TerrainPS(VsOut input)
     const float roughness = clamp(input.surfaceMaterial.x, 0.18, 1.0);
     output.normal = float4(normalize(input.worldNormal), lerp(roughness, roughness * 0.82, slope));
     output.position = float4(input.worldPosition, 1.0);
+    output.motion = input.motion;
     return output;
 }

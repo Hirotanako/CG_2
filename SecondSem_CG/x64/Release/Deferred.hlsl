@@ -4,9 +4,13 @@ cbuffer FrameCB : register(b0)
 {
     row_major float4x4 World;
     row_major float4x4 ViewProj;
+    row_major float4x4 PrevWorld;
+    row_major float4x4 ViewProjNoJitter;
+    row_major float4x4 PrevViewProjNoJitter;
     float4 TimeCamPos;
     float4 UvAnimAndPad;
-    float _PadRest[24];
+    float4 PrevTimeAndPad;
+    float _PadRest[36];
 };
 
 cbuffer MatCB : register(b1)
@@ -45,15 +49,15 @@ struct GeoVsOut
     float3 nrmW : NORMAL;
     float3 posW : POSITION0;
     float2 uv : TEXCOORD0;
+    float2 motion : TEXCOORD1;
 };
 
-float3 ApplyCurtainSway(float3 posL)
+float3 ApplyCurtainSway(float3 posL, float time)
 {
-    float t = TimeCamPos.x;
     float hang = saturate(posL.y * 0.0065);
     float phase = posL.x * 0.028 + posL.z * 0.022;
-    float s1 = sin(t * (1.05 * UvAnimAndPad.w) + phase);
-    float s2 = sin(t * 1.55 + phase * 1.35 + 1.7) * 0.42;
+    float s1 = sin(time * (1.05 * UvAnimAndPad.w) + phase);
+    float s2 = sin(time * 1.55 + phase * 1.35 + 1.7) * 0.42;
     float sway = (s1 + s2) * UvAnimAndPad.z * hang;
     posL.x += sway;
     posL.z += sway * 0.28;
@@ -64,15 +68,25 @@ GeoVsOut GeometryVS(GeoVsIn input)
 {
     GeoVsOut o;
     float3 posL = input.pos;
+    float3 prevPosL = input.pos;
     if (UseSwayAnim != 0)
-        posL = ApplyCurtainSway(posL);
+    {
+        posL = ApplyCurtainSway(posL, TimeCamPos.x);
+        prevPosL = ApplyCurtainSway(prevPosL, PrevTimeAndPad.x);
+    }
 
     float4 wpos = mul(float4(posL, 1.0f), World);
+    float4 prevWpos = mul(float4(prevPosL, 1.0f), PrevWorld);
     o.clipPos = mul(wpos, ViewProj);
     float3x3 W = (float3x3)World;
     o.nrmW = normalize(mul(input.normal, W));
     o.posW = wpos.xyz;
     o.uv = input.uv;
+    float4 currentNoJitter = mul(wpos, ViewProjNoJitter);
+    float4 previousNoJitter = mul(prevWpos, PrevViewProjNoJitter);
+    float2 currentUv = currentNoJitter.xy / currentNoJitter.w * float2(0.5, -0.5) + 0.5;
+    float2 previousUv = previousNoJitter.xy / previousNoJitter.w * float2(0.5, -0.5) + 0.5;
+    o.motion = currentUv - previousUv;
     return o;
 }
 
@@ -81,12 +95,13 @@ GeoVsOut ShadowVS(GeoVsIn input)
     GeoVsOut o;
     float3 posL = input.pos;
     if (UseSwayAnim != 0)
-        posL = ApplyCurtainSway(posL);
+        posL = ApplyCurtainSway(posL, TimeCamPos.x);
     float4 wpos = mul(float4(posL, 1.0f), World);
     o.clipPos = mul(wpos, ViewProj);
     o.nrmW = float3(0, 0, 0);
     o.posW = wpos.xyz;
     o.uv = input.uv;
+    o.motion = 0.0;
     return o;
 }
 
@@ -95,6 +110,7 @@ struct GeoRtOut
     float4 albedo : SV_Target0;
     float4 normal : SV_Target1;
     float4 position : SV_Target2;
+    float2 motion : SV_Target3;
 };
 
 GeoRtOut GeometryPS(GeoVsOut input)
@@ -134,6 +150,7 @@ GeoRtOut GeometryPS(GeoVsOut input)
     o.albedo = float4(a, metallic);
     o.normal = float4(normalW, roughness);
     o.position = float4(input.posW, 1);
+    o.motion = input.motion;
     return o;
 }
 

@@ -34,6 +34,8 @@ public:
         uint32_t frameIndex,
         const DirectX::XMMATRIX& view,
         const DirectX::XMMATRIX& projection,
+        const DirectX::XMMATRIX& viewProjectionNoJitter,
+        const DirectX::XMMATRIX& previousViewProjectionNoJitter,
         const DirectX::XMFLOAT3& cameraPosition);
 
     void ToggleWireframe() { m_wireframe = !m_wireframe; }
@@ -83,9 +85,11 @@ private:
     struct alignas(256) FrameConstants
     {
         DirectX::XMFLOAT4X4 viewProjection{};
+        DirectX::XMFLOAT4X4 viewProjectionNoJitter{};
+        DirectX::XMFLOAT4X4 previousViewProjectionNoJitter{};
         DirectX::XMFLOAT4 cameraAndMinHeight{};
         DirectX::XMFLOAT4 heightRangeAndPad{};
-        float padding[40]{};
+        float padding[8]{};
     };
 
     bool LoadHighMaps(const std::filesystem::path& directory, std::wstring& error);

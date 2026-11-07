@@ -211,10 +211,11 @@ void ParticleSystem::CreatePipelines(ID3D12Device* device, const wchar_t* shader
     renderPso.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     renderPso.SampleMask = UINT_MAX;
     renderPso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
-    renderPso.NumRenderTargets = 3;
+    renderPso.NumRenderTargets = 4;
     renderPso.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     renderPso.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     renderPso.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    renderPso.RTVFormats[3] = DXGI_FORMAT_R16G16_FLOAT;
     renderPso.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     renderPso.SampleDesc.Count = 1;
     Check(device->CreateGraphicsPipelineState(&renderPso, IID_PPV_ARGS(&m_renderPso)),

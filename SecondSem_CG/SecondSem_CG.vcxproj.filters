@@ -33,6 +33,9 @@
     <ClCompile Include="TerrainSystem.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="TemporalAA.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="Deferred.hlsl">
@@ -47,6 +50,9 @@
     <None Include="Terrain.hlsl">
       <Filter>Файлы ресурсов</Filter>
     </None>
+    <None Include="TemporalAA.hlsl">
+      <Filter>Файлы ресурсов</Filter>
+    </None>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ParticleSystem.h">
@@ -56,6 +62,9 @@
       <Filter>Исходные файлы</Filter>
     </ClInclude>
     <ClInclude Include="TerrainSystem.h">
+      <Filter>Исходные файлы</Filter>
+    </ClInclude>
+    <ClInclude Include="TemporalAA.h">
       <Filter>Исходные файлы</Filter>
     </ClInclude>
   </ItemGroup>

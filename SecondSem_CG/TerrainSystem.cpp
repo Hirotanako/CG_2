@@ -372,10 +372,11 @@ bool TerrainSystem::CreatePipeline(ID3D12Device* device, const wchar_t* shaderPa
     desc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
     desc.SampleMask = UINT_MAX;
     desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    desc.NumRenderTargets = 3;
+    desc.NumRenderTargets = 4;
     desc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     desc.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    desc.RTVFormats[3] = DXGI_FORMAT_R16G16_FLOAT;
     desc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
     desc.SampleDesc.Count = 1;
     desc.InputLayout = {layout, _countof(layout)};
@@ -476,7 +477,14 @@ void TerrainSystem::SelectNode(int32_t nodeIndex, const XMFLOAT3& camera, const 
     }
 }
 
-void TerrainSystem::Draw(ID3D12GraphicsCommandList* commandList, uint32_t frameIndex, const XMMATRIX& view, const XMMATRIX& projection, const XMFLOAT3& cameraPosition)
+void TerrainSystem::Draw(
+    ID3D12GraphicsCommandList* commandList,
+    uint32_t frameIndex,
+    const XMMATRIX& view,
+    const XMMATRIX& projection,
+    const XMMATRIX& viewProjectionNoJitter,
+    const XMMATRIX& previousViewProjectionNoJitter,
+    const XMFLOAT3& cameraPosition)
 {
     if (!m_rootSignature || m_nodes.empty())
         return;
@@ -484,6 +492,8 @@ void TerrainSystem::Draw(ID3D12GraphicsCommandList* commandList, uint32_t frameI
     const XMMATRIX viewProjection = view * projection;
     FrameConstants constants{};
     XMStoreFloat4x4(&constants.viewProjection, viewProjection);
+    XMStoreFloat4x4(&constants.viewProjectionNoJitter, viewProjectionNoJitter);
+    XMStoreFloat4x4(&constants.previousViewProjectionNoJitter, previousViewProjectionNoJitter);
     constants.cameraAndMinHeight = {cameraPosition.x, cameraPosition.y, cameraPosition.z, m_minHeight};
     constants.heightRangeAndPad = {(std::max)(0.001f, m_maxHeight - m_minHeight), 0.0f, 0.0f, 0.0f};
     std::memcpy(m_frameConstantsMapped[frameIndex], &constants, sizeof(constants));
