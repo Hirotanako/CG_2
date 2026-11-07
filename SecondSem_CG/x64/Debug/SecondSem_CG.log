@@ -1,14 +1,19 @@
-﻿  ObjLoader.cpp
-  SecondSem_CG.cpp
+﻿  SecondSem_CG.cpp
+  TerrainSystem.cpp
   TextureUtil.cpp
-  GBuffer.cpp
-  RenderingSystem.cpp
-  ShadowSystem.cpp
-  ParticleSystem.cpp
-  PostProcessSystem.cpp
   Создание кода...
-  SecondSem_CG.vcxproj -> C:\Users\JdasK\Downloads\CG_2-main\CG_2-main\SecondSem_CG\x64\Debug\SecondSem_CG.exe
+  SecondSem_CG.vcxproj -> C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\x64\Debug\SecondSem_CG.exe
   Скопировано файлов:         1.
   Скопировано файлов:         1.
   Скопировано файлов:         1.
   Скопировано файлов:         1.
+  Скопировано файлов:         1.
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Colormap only 1025.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Height Output-1025.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Material Output 1025_diffuse.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Material Output 1025_disp.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Material Output 1025_mask.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Material Output 1025_roughness.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\New Project Splatmap 1025.png
+  C:\Users\JdasK\Desktop\CG_2-main\SecondSem_CG\..\High\startup.tmd
+  ╤ъюяшЁютрэю Їрщыют: 8.

@@ -452,6 +452,26 @@ static bool DecodeImageFileToRgba32(
 
 } // namespace
 
+bool LoadImageRgba8(
+    const std::filesystem::path& filePath,
+    std::vector<uint8_t>& outPixels,
+    UINT& outWidth,
+    UINT& outHeight,
+    std::wstring& error)
+{
+    error.clear();
+    ComPtr<IWICImagingFactory> factory;
+    const HRESULT hr = CoCreateInstance(
+        CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (FAILED(hr))
+    {
+        error = L"WIC factory";
+        return false;
+    }
+    return DecodeImageFileToRgba32(
+        factory.Get(), filePath, outPixels, outWidth, outHeight, error);
+}
+
 std::filesystem::path ResolveTexturePathInTexturesFolder(
     const std::filesystem::path& mtlDir,
     const std::wstring& mapRelFromMtl)

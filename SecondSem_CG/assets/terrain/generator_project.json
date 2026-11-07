@@ -1,0 +1,14 @@
+{
+  "name": "CG2 procedural mountain basin",
+  "seed": 73129,
+  "resolution": 257,
+  "tiles_per_axis": 4,
+  "tile_samples_with_shared_border": 65,
+  "operators": [
+    { "type": "fbm", "octaves": 6, "gain": 0.52, "lacunarity": 2.03 },
+    { "type": "ridge", "weight": 0.38 },
+    { "type": "radial_basin", "weight": 0.22 },
+    { "type": "edge_falloff", "start": 0.82 }
+  ],
+  "output": "unsigned little-endian R16, linear data"
+}

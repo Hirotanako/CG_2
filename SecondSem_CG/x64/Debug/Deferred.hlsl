@@ -194,7 +194,9 @@ FsOut LightingFullscreenVS(uint vid : SV_VertexID)
     FsOut o;
     float2 uv = float2((vid << 1) & 2, vid & 2);
     o.pos = float4(uv * float2(2.f, -2.f) + float2(-1.f, 1.f), 0.f, 1.f);
-    o.uv = float2(uv.x, 1.f - uv.y);
+    // Render directly to the swap chain. The removed post-process used to do
+    // a second Y flip, so keeping the old flip here inverted the whole image.
+    o.uv = uv;
     return o;
 }
 

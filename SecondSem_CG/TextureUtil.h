@@ -10,6 +10,15 @@
 namespace Tex
 {
 
+// Decode an image through the same WIC/TGA path used by GPU textures, but keep
+// the RGBA8 pixels on the CPU (height fields and vertex-baked terrain maps).
+bool LoadImageRgba8(
+    const std::filesystem::path& filePath,
+    std::vector<uint8_t>& outPixels,
+    UINT& outWidth,
+    UINT& outHeight,
+    std::wstring& error);
+
 // Каталог текстур: <mtlDir>/textures/. В MTL может быть другое расширение — ищем тот же stem с .tga.
 std::filesystem::path ResolveTexturePathInTexturesFolder(
     const std::filesystem::path& mtlDir,

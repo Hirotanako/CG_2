@@ -1,0 +1,6 @@
+TERRAIN 1
+tiles 4
+tile_samples 65
+world_size 128.0
+height_scale 18.0
+base_height -10.0

@@ -18,6 +18,7 @@
 #include "PostProcessSystem.h"
 #include "RenderingSystem.h"
 #include "ShadowSystem.h"
+#include "TerrainSystem.h"
 #include "TextureUtil.h"
 
 #include <algorithm>
@@ -56,7 +57,9 @@ constexpr UINT kParticleSrvBase = 420;
 constexpr UINT kPostProcessSrvBase = 408;
 constexpr UINT kIblSrvBase = 410;
 constexpr UINT kShadowOverlaySrvBase = 411;
-constexpr bool kPostProcessEnabled = true;
+// Chromatic aberration was the only post effect. Render lighting straight to
+// the swap-chain target to keep terrain silhouettes and colour bands crisp.
+constexpr bool kPostProcessEnabled = false;
 constexpr bool kShadowOverlayEnabled = false;
 constexpr UINT kCerberusMaterialSrvBase = 380;
 constexpr UINT kWoodMaterialSrvBase = 384;
@@ -126,6 +129,7 @@ RenderingSystem g_renderSys;
 ShadowSystem g_shadowSys;
 ParticleSystem g_particleSys;
 PostProcessSystem g_postProcessSys;
+TerrainSystem g_terrainSys;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -232,6 +236,25 @@ std::wstring ParticleShaderPath()
 std::wstring PostProcessShaderPath()
 {
     return ExeDirectory() + L"PostProcess.hlsl";
+}
+
+std::wstring TerrainShaderPath()
+{
+    return ExeDirectory() + L"Terrain.hlsl";
+}
+
+std::filesystem::path FindHighDirectory()
+{
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path(ExeDirectory()) / L"High",
+        std::filesystem::current_path() / L"High",
+        std::filesystem::path(ExeDirectory()).parent_path().parent_path().parent_path() / L"High",
+    };
+    for (const auto& directory : candidates)
+        if (std::filesystem::exists(directory / L"New Project Height Output-1025.png") &&
+            std::filesystem::exists(directory / L"startup.tmd"))
+            return directory;
+    return {};
 }
 
 void CompileShader(const wchar_t* path, const char* entry, const char* target, ComPtr<ID3DBlob>& out)
@@ -1684,6 +1707,7 @@ void DrawFrame(float dt)
     DrawCerberus(viewProj);
     DrawWoodRoot(viewProj);
     DrawCubes(viewProj);
+    g_terrainSys.Draw(g_cmdList.Get(), g_frameIndex, view, proj, g_camPos);
     g_particleSys.UpdateAndDraw(
         g_cmdList.Get(), g_srvHeap.Get(), g_frameIndex, dt, g_appTime, view, viewProj,
         g_camPos, ParticleEmitterPosition(), g_particleFloorY);
@@ -1720,6 +1744,23 @@ void DrawFrame(float dt)
     ID3D12CommandList* lists[] = {g_cmdList.Get()};
     g_queue->ExecuteCommandLists(1, lists);
     ThrowIfFailed(g_swapChain->Present(1, 0));
+
+    static float titleUpdateAt = 0.0f;
+    if (g_appTime >= titleUpdateAt)
+    {
+        titleUpdateAt = g_appTime + 0.25f;
+        const TerrainSystem::Stats& stats = g_terrainSys.LastStats();
+        wchar_t title[256]{};
+        swprintf_s(
+            title,
+            L"CG2 Terrain | V: wireframe [%s] | C: culling [%s] | nodes: %u | triangles: %u | culled subtrees: %u",
+            g_terrainSys.WireframeEnabled() ? L"ON" : L"OFF",
+            g_terrainSys.CullingEnabled() ? L"ON" : L"OFF",
+            stats.submittedNodes,
+            stats.submittedTriangles,
+            stats.culledSubtrees);
+        SetWindowTextW(g_hwnd, title);
+    }
 
     const UINT64 signalValue = ++g_fenceValue;
     ThrowIfFailed(g_queue->Signal(g_fence.Get(), signalValue));
@@ -1825,6 +1866,16 @@ void InitD3D(HWND hwnd)
     LoadScene();
     CreateCubes();
 
+    std::wstring terrainError;
+    const std::filesystem::path highDirectory = FindHighDirectory();
+    if (highDirectory.empty() ||
+        !g_terrainSys.Init(g_device.Get(), highDirectory, TerrainShaderPath().c_str(), terrainError))
+    {
+        if (terrainError.empty())
+            terrainError = L"Не найден полный набор карт в каталоге High";
+        MessageBoxW(g_hwnd, terrainError.c_str(), L"Terrain", MB_OK | MB_ICONERROR);
+    }
+
     // Particle buffers live in the default heap, so their initial contents and
     // Append/Consume counters are uploaded once through the command list.
     ThrowIfFailed(g_cmdAlloc[0]->Reset());
@@ -1853,6 +1904,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE)
             g_running = false;
+        if ((lp & (1LL << 30)) == 0)
+        {
+            if (wp == 'V')
+                g_terrainSys.ToggleWireframe();
+            else if (wp == 'C')
+                g_terrainSys.ToggleCulling();
+        }
         return 0;
     case WM_SIZE:
         if (g_swapChain && wp != SIZE_MINIMIZED)

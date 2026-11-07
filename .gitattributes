@@ -1,2 +1,10 @@
-# Auto detect text files and perform LF normalization
+\# filter=lfs diff=lfs merge=lfs -text
 * text=auto
+Если filter=lfs diff=lfs merge=lfs -text
+вам filter=lfs diff=lfs merge=lfs -text
+действительно filter=lfs diff=lfs merge=lfs -text
+отслеживать filter=lfs diff=lfs merge=lfs -text
+такие filter=lfs diff=lfs merge=lfs -text
+файлы filter=lfs diff=lfs merge=lfs -text
+*.ipch filter=lfs diff=lfs merge=lfs -text
+нужно filter=lfs diff=lfs merge=lfs -text
