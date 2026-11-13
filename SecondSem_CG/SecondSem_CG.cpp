@@ -14,6 +14,7 @@
 #include <wrl/client.h>
 
 #include "ObjLoader.h"
+#include "FrustumDebugRenderer.h"
 #include "ParticleSystem.h"
 #include "PostProcessSystem.h"
 #include "RenderingSystem.h"
@@ -142,6 +143,7 @@ ParticleSystem g_particleSys;
 PostProcessSystem g_postProcessSys;
 TerrainSystem g_terrainSys;
 TemporalAA g_temporalAA;
+FrustumDebugRenderer g_frustumDebug;
 
 ComPtr<ID3D12DescriptorHeap> g_srvHeap;
 UINT g_srvDescriptorSize = 0;
@@ -211,6 +213,7 @@ float g_camYaw = 0.0f;
 float g_camPitch = -0.12f;
 bool g_camPrevRmb = false;
 float g_smoothedCameraSpeed = 0.0f;
+bool g_observerCamera = false;
 
 XMFLOAT3 g_sceneCenter{0.f, 2.f, 0.f};
 float g_sceneRadius = 25.f;
@@ -264,6 +267,11 @@ std::wstring TerrainShaderPath()
 std::wstring TemporalShaderPath()
 {
     return ExeDirectory() + L"TemporalAA.hlsl";
+}
+
+std::wstring FrustumDebugShaderPath()
+{
+    return ExeDirectory() + L"FrustumDebug.hlsl";
 }
 
 std::filesystem::path FindHighDirectory()
@@ -390,6 +398,9 @@ void ResizeSwapChain(UINT w, UINT h)
         g_renderSys.GBufferTargets().CreateMotionVectorSrv(
             g_device.Get(), g_srvHeap.Get(), kMotionSrv, g_srvDescriptorSize);
         g_temporalAA.Resize(g_device.Get(), w, h, g_srvHeap.Get());
+        g_temporalSample = 0;
+        g_currentJitterUv = XMFLOAT2(0.0f, 0.0f);
+        g_previousJitterUv = XMFLOAT2(0.0f, 0.0f);
         if (kPostProcessEnabled)
             g_postProcessSys.Resize(g_device.Get(), w, h, g_srvHeap.Get());
     }
@@ -1397,6 +1408,24 @@ XMMATRIX CalcProj()
     return XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, ShadowSystem::kCameraNear, ShadowSystem::kCameraFar);
 }
 
+XMMATRIX CalcObserverView(XMFLOAT3& observerPosition)
+{
+    // Stable overview of the whole 128x128 terrain. It looks at the controlled
+    // camera, so WASD movement can be inspected without leaving observer mode.
+    observerPosition = XMFLOAT3(92.0f, 68.0f, -92.0f);
+    const XMVECTOR eye = XMLoadFloat3(&observerPosition);
+    const XMVECTOR target = XMLoadFloat3(&g_camPos);
+    return XMMatrixLookAtLH(eye, target, XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f));
+}
+
+XMMATRIX CalcFrustumDebugProj()
+{
+    const float aspect = static_cast<float>(g_width) / static_cast<float>((std::max)(1u, g_height));
+    // Side planes exactly match the real camera. The displayed far plane is
+    // capped so the cone remains readable in the overview.
+    return XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, ShadowSystem::kCameraNear, 90.0f);
+}
+
 float Halton(uint32_t index, uint32_t base)
 {
     float result = 0.0f;
@@ -1738,8 +1767,16 @@ void DrawFrame(float dt)
     g_previousAppTime = g_appTime;
     g_appTime += dt;
 
-    const XMMATRIX view = CalcView();
-    const XMMATRIX proj = CalcProj();
+    // The controlled camera always defines terrain LOD and culling. In the
+    // observer mode only the render camera changes, which makes the rejected
+    // part of the terrain and the controlled-camera frustum visible together.
+    const XMMATRIX cullingView = CalcView();
+    const XMMATRIX cullingProj = CalcProj();
+    XMFLOAT3 renderCameraPosition = g_camPos;
+    const XMMATRIX view = g_observerCamera
+        ? CalcObserverView(renderCameraPosition)
+        : cullingView;
+    const XMMATRIX proj = cullingProj;
     g_currentViewProjNoJitter = view * proj;
     g_previousJitterUv = g_currentJitterUv;
     if (g_temporalAA.Enabled())
@@ -1760,7 +1797,8 @@ void DrawFrame(float dt)
     const XMMATRIX viewProj = view * jitteredProj;
 
     g_shadowSys.UpdateCascades(
-        g_frameIndex, view, proj, g_camPos, g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
+        g_frameIndex, view, proj, renderCameraPosition,
+        g_renderSys.SunDirection(), g_sceneCenter, g_sceneRadius);
 
     ThrowIfFailed(g_cmdAlloc[g_frameIndex]->Reset());
     ThrowIfFailed(g_cmdList->Reset(g_cmdAlloc[g_frameIndex].Get(), g_pipelineGeo.Get()));
@@ -1794,10 +1832,11 @@ void DrawFrame(float dt)
     DrawCubes(viewProj);
     g_terrainSys.Draw(
         g_cmdList.Get(), g_frameIndex, view, jitteredProj,
-        g_currentViewProjNoJitter, g_previousViewProjNoJitter, g_camPos);
+        g_currentViewProjNoJitter, g_previousViewProjNoJitter, g_height,
+        renderCameraPosition, cullingView, cullingProj, g_camPos);
     g_particleSys.UpdateAndDraw(
         g_cmdList.Get(), g_srvHeap.Get(), g_frameIndex, dt, g_appTime, view, viewProj,
-        g_camPos, ParticleEmitterPosition(), g_particleFloorY);
+        renderCameraPosition, ParticleEmitterPosition(), g_particleFloorY);
 
     gb.TransitionToShaderResource(g_cmdList.Get());
 
@@ -1810,16 +1849,31 @@ void DrawFrame(float dt)
     D3D12_CPU_DESCRIPTOR_HANDLE rtv = g_rtvHeap->GetCPUDescriptorHandleForHeapStart();
     rtv.ptr += static_cast<SIZE_T>(g_frameIndex) * g_rtvDescriptorSize;
 
-    g_renderSys.UploadFrameConstants(g_frameIndex, g_camPos, g_width, g_height);
-    const D3D12_CPU_DESCRIPTOR_HANDLE lightingRtv = g_temporalAA.Enabled()
+    g_renderSys.UploadFrameConstants(g_frameIndex, renderCameraPosition, g_width, g_height);
+    // Motion-vector inspection is a temporal diagnostic pass, but it must be
+    // available with accumulation/jitter disabled as required by the lab.
+    const bool runTemporalPass =
+        g_temporalAA.Enabled() || g_temporalAA.MotionDebugEnabled();
+    const D3D12_CPU_DESCRIPTOR_HANDLE lightingRtv = runTemporalPass
         ? g_temporalAA.BeginCurrent(g_cmdList.Get())
         : rtv;
     g_renderSys.DrawLightingPass(
         g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, lightingRtv, g_width, g_height);
-    if (g_temporalAA.Enabled())
+    if (runTemporalPass)
         g_temporalAA.Resolve(
             g_cmdList.Get(), g_srvHeap.Get(), rtv, kMotionSrv,
             g_currentJitterUv, g_previousJitterUv);
+    if (g_observerCamera)
+    {
+        // Overlay is intentionally drawn after TAA so the thin diagnostic
+        // lines are not blurred or accumulated into history.
+        // Resolve binds the back buffer and history simultaneously; restore a
+        // single RTV because the line pipeline writes only to the back buffer.
+        g_cmdList->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        g_frustumDebug.Draw(
+            g_cmdList.Get(), g_frameIndex, view * proj,
+            cullingView * CalcFrustumDebugProj());
+    }
 
     D3D12_RESOURCE_BARRIER toPresent =
         MakeTransition(backBuffer.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1839,13 +1893,16 @@ void DrawFrame(float dt)
         wchar_t title[256]{};
         swprintf_s(
             title,
-            L"CG2 | T: TAA [%s] | M: motion [%s] | V: wire [%s] | C: culling [%s] | nodes: %u | triangles: %u",
+            L"CG2 | F: observer [%s] | T: TAA [%s] | M: motion [%s] | H: clamp [%s] | V: wire [%s] | C: culling [%s] | nodes: %u | triangles: %u | culled: %u",
+            g_observerCamera ? L"ON" : L"OFF",
             g_temporalAA.Enabled() ? L"ON" : L"OFF",
             g_temporalAA.MotionDebugEnabled() ? L"ON" : L"OFF",
+            g_temporalAA.HistoryClampingEnabled() ? L"ON" : L"OFF",
             g_terrainSys.WireframeEnabled() ? L"ON" : L"OFF",
             g_terrainSys.CullingEnabled() ? L"ON" : L"OFF",
             stats.submittedNodes,
-            stats.submittedTriangles);
+            stats.submittedTriangles,
+            stats.culledSubtrees);
         SetWindowTextW(g_hwnd, title);
     }
 
@@ -1945,6 +2002,10 @@ void InitD3D(HWND hwnd)
         g_device.Get(), g_width, g_height, g_srvHeap.Get(),
         kTaaCurrentSrv, kTaaHistorySrv0, kTaaHistorySrv1,
         g_srvDescriptorSize, TemporalShaderPath().c_str());
+    std::wstring frustumDebugError;
+    if (!g_frustumDebug.Init(
+            g_device.Get(), FrustumDebugShaderPath().c_str(), frustumDebugError))
+        MessageBoxW(g_hwnd, frustumDebugError.c_str(), L"Frustum debug", MB_OK | MB_ICONERROR);
     g_shadowSys.Init(
         g_device.Get(),
         g_srvHeap.Get(),
@@ -2005,9 +2066,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             else if (wp == 'C')
                 g_terrainSys.ToggleCulling();
             else if (wp == 'T')
+            {
                 g_temporalAA.Toggle();
+                g_temporalSample = 0;
+                g_currentJitterUv = XMFLOAT2(0.0f, 0.0f);
+                g_previousJitterUv = XMFLOAT2(0.0f, 0.0f);
+            }
             else if (wp == 'M')
                 g_temporalAA.ToggleMotionDebug();
+            else if (wp == 'H')
+                g_temporalAA.ToggleHistoryClamping();
+            else if (wp == 'F')
+            {
+                g_observerCamera = !g_observerCamera;
+                g_temporalAA.Invalidate();
+                g_temporalSample = 0;
+            }
         }
         return 0;
     case WM_SIZE:

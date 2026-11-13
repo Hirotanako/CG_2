@@ -3,8 +3,28 @@
   "WorkspaceRootPath": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\",
   "Documents": [
     {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Terrain.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\Terrain.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Shaders.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\Shaders.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\TemporalAA.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\TemporalAA.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
+    },
+    {
       "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\SecondSem_CG.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebugRenderer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\FrustumDebugRenderer.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
+    },
+    {
+      "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebug.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}",
+      "RelativeMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|solutionrelative:SecondSem_CG\\FrustumDebug.hlsl||{8B382828-6202-11D1-8870-0000F87579D2}"
     },
     {
       "AbsoluteMoniker": "D:0:0:{8E6683BA-40C2-4DF6-81D8-344B1CCA09AB}|SecondSem_CG\\SecondSem_CG.vcxproj|C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\TextureUtil.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
@@ -38,24 +58,89 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 4,
           "Children": [
             {
               "$type": "Document",
+              "DocumentIndex": 1,
+              "Title": "Shaders.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Shaders.hlsl",
+              "RelativeDocumentMoniker": "SecondSem_CG\\Shaders.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Shaders.hlsl",
+              "RelativeToolTip": "SecondSem_CG\\Shaders.hlsl",
+              "ViewState": "AgIAAB4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-11-08T01:00:07.49Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 2,
+              "Title": "TemporalAA.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\TemporalAA.hlsl",
+              "RelativeDocumentMoniker": "SecondSem_CG\\TemporalAA.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\TemporalAA.hlsl",
+              "RelativeToolTip": "SecondSem_CG\\TemporalAA.hlsl",
+              "ViewState": "AgIAAAkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-11-08T00:44:42.176Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 4,
+              "Title": "FrustumDebugRenderer.cpp",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebugRenderer.cpp",
+              "RelativeDocumentMoniker": "SecondSem_CG\\FrustumDebugRenderer.cpp",
+              "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebugRenderer.cpp",
+              "RelativeToolTip": "SecondSem_CG\\FrustumDebugRenderer.cpp",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAcAAAAcAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
+              "WhenOpened": "2026-11-08T00:44:33.749Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 5,
+              "Title": "FrustumDebug.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebug.hlsl",
+              "RelativeDocumentMoniker": "SecondSem_CG\\FrustumDebug.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\FrustumDebug.hlsl",
+              "RelativeToolTip": "SecondSem_CG\\FrustumDebug.hlsl",
+              "ViewState": "AgIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-11-08T00:44:26.059Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
               "DocumentIndex": 0,
+              "Title": "Terrain.hlsl",
+              "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Terrain.hlsl",
+              "RelativeDocumentMoniker": "SecondSem_CG\\Terrain.hlsl",
+              "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Terrain.hlsl",
+              "RelativeToolTip": "SecondSem_CG\\Terrain.hlsl",
+              "ViewState": "AgIAABgAAAAAAAAAAAAAAD0AAABHAAAAAAAAAA==",
+              "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.001001|",
+              "WhenOpened": "2026-11-08T00:22:54.873Z",
+              "EditorCaption": ""
+            },
+            {
+              "$type": "Document",
+              "DocumentIndex": 3,
               "Title": "SecondSem_CG.cpp",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp",
               "RelativeDocumentMoniker": "SecondSem_CG\\SecondSem_CG.cpp",
               "ToolTip": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\SecondSem_CG.cpp",
               "RelativeToolTip": "SecondSem_CG\\SecondSem_CG.cpp",
-              "ViewState": "AgIAAB8FAAAAAAAAAAAcwC4FAAAVAAAAAAAAAA==",
+              "ViewState": "AgIAAA4AAAAAAAAAAAAcwCwAAAAcAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-09-18T13:38:30.037Z",
               "EditorCaption": ""
             },
             {
               "$type": "Document",
-              "DocumentIndex": 1,
+              "DocumentIndex": 6,
               "Title": "TextureUtil.cpp",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\TextureUtil.cpp",
               "RelativeDocumentMoniker": "SecondSem_CG\\TextureUtil.cpp",
@@ -67,7 +152,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 2,
+              "DocumentIndex": 7,
               "Title": "ParticleSystem.cpp",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\ParticleSystem.cpp",
               "RelativeDocumentMoniker": "SecondSem_CG\\ParticleSystem.cpp",
@@ -79,7 +164,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 3,
+              "DocumentIndex": 8,
               "Title": "ObjLoader.cpp",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\ObjLoader.cpp",
               "RelativeDocumentMoniker": "SecondSem_CG\\ObjLoader.cpp",
@@ -91,7 +176,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 4,
+              "DocumentIndex": 9,
               "Title": "GBuffer.cpp",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\GBuffer.cpp",
               "RelativeDocumentMoniker": "SecondSem_CG\\GBuffer.cpp",
@@ -103,7 +188,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 5,
+              "DocumentIndex": 10,
               "Title": "Deferred.hlsl",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Deferred.hlsl",
               "RelativeDocumentMoniker": "SecondSem_CG\\Deferred.hlsl",
@@ -115,7 +200,7 @@
             },
             {
               "$type": "Document",
-              "DocumentIndex": 6,
+              "DocumentIndex": 11,
               "Title": "Particles.hlsl",
               "DocumentMoniker": "C:\\Users\\JdasK\\Desktop\\CG_2-main\\SecondSem_CG\\Particles.hlsl",
               "RelativeDocumentMoniker": "SecondSem_CG\\Particles.hlsl",

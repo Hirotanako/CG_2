@@ -36,7 +36,11 @@ public:
         const DirectX::XMMATRIX& projection,
         const DirectX::XMMATRIX& viewProjectionNoJitter,
         const DirectX::XMMATRIX& previousViewProjectionNoJitter,
-        const DirectX::XMFLOAT3& cameraPosition);
+        uint32_t viewportHeight,
+        const DirectX::XMFLOAT3& cameraPosition,
+        const DirectX::XMMATRIX& cullingView,
+        const DirectX::XMMATRIX& cullingProjection,
+        const DirectX::XMFLOAT3& cullingCameraPosition);
 
     void ToggleWireframe() { m_wireframe = !m_wireframe; }
     void ToggleCulling() { m_culling = !m_culling; }
@@ -71,9 +75,10 @@ private:
         uint32_t sampleY = 0;
         uint32_t sampleSpan = 0;
         uint32_t level = 0;
-        uint32_t firstIndex = 0;
+        uint32_t baseVertex = 0;
         uint32_t indexCount = 0;
         float worldSize = 0.0f;
+        float geometricError = 0.0f;
     };
 
     struct Plane
@@ -94,8 +99,10 @@ private:
 
     bool LoadHighMaps(const std::filesystem::path& directory, std::wstring& error);
     void BuildQuadtreeAndMeshes();
+    void BuildSharedIndices();
     int32_t BuildNode(uint32_t x, uint32_t y, uint32_t span, uint32_t level);
     void AppendNodeMesh(Node& node);
+    float ComputeGeometricError(const Node& node) const;
     float HeightAt(uint32_t x, uint32_t y) const;
     DirectX::XMFLOAT3 NormalAt(uint32_t x, uint32_t y) const;
     void CreateGpuResources(ID3D12Device* device);
@@ -105,6 +112,8 @@ private:
     void SelectNode(
         int32_t nodeIndex,
         const DirectX::XMFLOAT3& camera,
+        const DirectX::XMFLOAT3& cameraForward,
+        float projectionScalePixels,
         const std::array<Plane, 6>& planes,
         std::vector<int32_t>& selection);
 

@@ -213,7 +213,7 @@ void TemporalAA::Resolve(ID3D12GraphicsCommandList* cmd, ID3D12DescriptorHeap* s
         1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height),
         currentJitterUv.x, currentJitterUv.y, previousJitterUv.x, previousJitterUv.y,
         m_historyValid ? 1.0f : 0.0f, m_debugMotion ? 1.0f : 0.0f,
-        0.90f, 0.0f, 0.0f, 0.0f};
+        0.90f, m_historyClamping ? 1.0f : 0.0f, 0.0f, 0.0f};
     cmd->SetGraphicsRoot32BitConstants(3, 12, constants, 0);
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->IASetVertexBuffers(0, 0, nullptr);

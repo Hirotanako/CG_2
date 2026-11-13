@@ -202,7 +202,7 @@ XMFLOAT3 TerrainSystem::NormalAt(uint32_t x, uint32_t y) const
 
 void TerrainSystem::AppendNodeMesh(Node& node)
 {
-    const uint32_t firstVertex = static_cast<uint32_t>(m_vertices.size());
+    node.baseVertex = static_cast<uint32_t>(m_vertices.size());
     const uint32_t step = node.sampleSpan / kPatchSegments;
     const float cell = m_worldSize / static_cast<float>(m_sampleCount - 1);
     const float half = m_worldSize * 0.5f;
@@ -229,43 +229,80 @@ void TerrainSystem::AppendNodeMesh(Node& node)
         for (uint32_t x = 0; x <= kPatchSegments; ++x)
             appendVertex(node.sampleX + x * step, node.sampleY + y * step, 0.0f);
 
-    node.firstIndex = static_cast<uint32_t>(m_indices.size());
-    const uint32_t row = kPatchSegments + 1;
-    for (uint32_t y = 0; y < kPatchSegments; ++y)
-    {
-        for (uint32_t x = 0; x < kPatchSegments; ++x)
-        {
-            const uint32_t a = firstVertex + y * row + x;
-            const uint32_t b = a + row;
-            m_indices.insert(m_indices.end(), {a, b, a + 1, a + 1, b, b + 1});
-        }
-    }
-
-    // Four independent edge strips. Their top vertices reference the regular
-    // grid and the duplicated lower vertices form a vertical crack-covering skirt.
+    // Four independent lower edge strips. A single shared index buffer joins
+    // them to the regular grid for every quadtree tile.
     const float skirtDepth = (std::max)(2.0f, m_heightScale * 0.12f);
-    auto addSkirt = [&](auto gridIndex, auto samplePosition) {
-        const uint32_t lowerStart = static_cast<uint32_t>(m_vertices.size());
+    auto addSkirtVertices = [&](auto samplePosition) {
         for (uint32_t i = 0; i <= kPatchSegments; ++i)
         {
             const auto [sx, sy] = samplePosition(i);
             appendVertex(sx, sy, -skirtDepth);
         }
+    };
+    addSkirtVertices([&](uint32_t i) { return std::pair{node.sampleX + i * step, node.sampleY}; });
+    addSkirtVertices([&](uint32_t i) { return std::pair{node.sampleX + node.sampleSpan, node.sampleY + i * step}; });
+    addSkirtVertices([&](uint32_t i) { return std::pair{node.sampleX + node.sampleSpan - i * step, node.sampleY + node.sampleSpan}; });
+    addSkirtVertices([&](uint32_t i) { return std::pair{node.sampleX, node.sampleY + node.sampleSpan - i * step}; });
+    node.indexCount = static_cast<uint32_t>(m_indices.size());
+}
+
+void TerrainSystem::BuildSharedIndices()
+{
+    m_indices.clear();
+    const uint32_t row = kPatchSegments + 1;
+    for (uint32_t y = 0; y < kPatchSegments; ++y)
+        for (uint32_t x = 0; x < kPatchSegments; ++x)
+        {
+            const uint32_t a = y * row + x;
+            const uint32_t b = a + row;
+            m_indices.insert(m_indices.end(), {a, b, a + 1, a + 1, b, b + 1});
+        }
+
+    const uint32_t gridVertexCount = row * row;
+    auto addSkirt = [&](auto gridIndex, uint32_t edge) {
+        const uint32_t lowerStart = gridVertexCount + edge * row;
         for (uint32_t i = 0; i < kPatchSegments; ++i)
         {
-            const uint32_t top0 = firstVertex + gridIndex(i);
-            const uint32_t top1 = firstVertex + gridIndex(i + 1);
+            const uint32_t top0 = gridIndex(i);
+            const uint32_t top1 = gridIndex(i + 1);
             const uint32_t low0 = lowerStart + i;
-            const uint32_t low1 = low0 + 1;
-            m_indices.insert(m_indices.end(), {top0, low0, top1, top1, low0, low1});
+            m_indices.insert(m_indices.end(), {top0, low0, top1, top1, low0, low0 + 1});
         }
     };
-    addSkirt([&](uint32_t i) { return i; }, [&](uint32_t i) { return std::pair{node.sampleX + i * step, node.sampleY}; });
-    addSkirt([&](uint32_t i) { return i * row + kPatchSegments; }, [&](uint32_t i) { return std::pair{node.sampleX + node.sampleSpan, node.sampleY + i * step}; });
-    addSkirt([&](uint32_t i) { return kPatchSegments * row + (kPatchSegments - i); }, [&](uint32_t i) { return std::pair{node.sampleX + node.sampleSpan - i * step, node.sampleY + node.sampleSpan}; });
-    addSkirt([&](uint32_t i) { return (kPatchSegments - i) * row; }, [&](uint32_t i) { return std::pair{node.sampleX, node.sampleY + node.sampleSpan - i * step}; });
+    addSkirt([&](uint32_t i) { return i; }, 0);
+    addSkirt([&](uint32_t i) { return i * row + kPatchSegments; }, 1);
+    addSkirt([&](uint32_t i) { return kPatchSegments * row + (kPatchSegments - i); }, 2);
+    addSkirt([&](uint32_t i) { return (kPatchSegments - i) * row; }, 3);
+}
 
-    node.indexCount = static_cast<uint32_t>(m_indices.size()) - node.firstIndex;
+float TerrainSystem::ComputeGeometricError(const Node& node) const
+{
+    const uint32_t step = node.sampleSpan / kPatchSegments;
+    if (step <= 1)
+        return 0.0f;
+    float maximumError = 0.0f;
+    for (uint32_t localY = 0; localY <= node.sampleSpan; ++localY)
+    {
+        const uint32_t cellY = (std::min)(localY / step, kPatchSegments - 1);
+        const float fy = static_cast<float>(localY - cellY * step) / static_cast<float>(step);
+        for (uint32_t localX = 0; localX <= node.sampleSpan; ++localX)
+        {
+            const uint32_t cellX = (std::min)(localX / step, kPatchSegments - 1);
+            const float fx = static_cast<float>(localX - cellX * step) / static_cast<float>(step);
+            const uint32_t x0 = node.sampleX + cellX * step;
+            const uint32_t y0 = node.sampleY + cellY * step;
+            const float h00 = HeightAt(x0, y0);
+            const float h10 = HeightAt(x0 + step, y0);
+            const float h01 = HeightAt(x0, y0 + step);
+            const float h11 = HeightAt(x0 + step, y0 + step);
+            const float coarse =
+                (h00 + (h10 - h00) * fx) * (1.0f - fy) +
+                (h01 + (h11 - h01) * fx) * fy;
+            maximumError = (std::max)(maximumError,
+                std::abs(HeightAt(node.sampleX + localX, node.sampleY + localY) - coarse));
+        }
+    }
+    return maximumError;
 }
 
 int32_t TerrainSystem::BuildNode(uint32_t x, uint32_t y, uint32_t span, uint32_t level)
@@ -292,6 +329,7 @@ int32_t TerrainSystem::BuildNode(uint32_t x, uint32_t y, uint32_t span, uint32_t
     const float halfWorld = m_worldSize * 0.5f;
     node.boundsMin = {x * cell - halfWorld, lo - (std::max)(2.0f, m_heightScale * 0.12f), y * cell - halfWorld};
     node.boundsMax = {(x + span) * cell - halfWorld, hi, (y + span) * cell - halfWorld};
+    node.geometricError = ComputeGeometricError(node);
     AppendNodeMesh(node);
 
     if (level < m_maxLevel)
@@ -312,7 +350,7 @@ void TerrainSystem::BuildQuadtreeAndMeshes()
 {
     m_nodes.clear();
     m_vertices.clear();
-    m_indices.clear();
+    BuildSharedIndices();
     BuildNode(0, 0, m_sampleCount - 1, 0);
 }
 
@@ -450,7 +488,13 @@ bool TerrainSystem::IsOutsideFrustum(const Node& node, const std::array<Plane, 6
     return false;
 }
 
-void TerrainSystem::SelectNode(int32_t nodeIndex, const XMFLOAT3& camera, const std::array<Plane, 6>& planes, std::vector<int32_t>& selection)
+void TerrainSystem::SelectNode(
+    int32_t nodeIndex,
+    const XMFLOAT3& camera,
+    const XMFLOAT3& cameraForward,
+    float projectionScalePixels,
+    const std::array<Plane, 6>& planes,
+    std::vector<int32_t>& selection)
 {
     const Node& node = m_nodes[static_cast<size_t>(nodeIndex)];
     ++m_stats.testedNodes;
@@ -459,17 +503,25 @@ void TerrainSystem::SelectNode(int32_t nodeIndex, const XMFLOAT3& camera, const 
         ++m_stats.culledSubtrees;
         return;
     }
-    const float closestX = (std::clamp)(camera.x, node.boundsMin.x, node.boundsMax.x);
-    const float closestZ = (std::clamp)(camera.z, node.boundsMin.z, node.boundsMax.z);
-    const float dx = camera.x - closestX;
-    const float dz = camera.z - closestZ;
-    const float distance = std::sqrt(dx * dx + dz * dz);
+    const XMFLOAT3 center{
+        (node.boundsMin.x + node.boundsMax.x) * 0.5f,
+        (node.boundsMin.y + node.boundsMax.y) * 0.5f,
+        (node.boundsMin.z + node.boundsMax.z) * 0.5f};
+    const float viewDepth =
+        (center.x - camera.x) * cameraForward.x +
+        (center.y - camera.y) * cameraForward.y +
+        (center.z - camera.z) * cameraForward.z;
+    const float projectedErrorPixels =
+        node.geometricError * projectionScalePixels / (std::max)(viewDepth, 0.1f);
     const bool hasChildren = node.children[0] >= 0;
-    const bool split = hasChildren && distance < node.worldSize * 1.65f;
+    // Lecture SSE criterion: refine only when the geometric deviation of this
+    // LOD would cover more than the allowed number of screen pixels.
+    constexpr float kMaximumScreenSpaceError = 1.5f;
+    const bool split = hasChildren && projectedErrorPixels > kMaximumScreenSpaceError;
     if (split)
     {
         for (int32_t child : node.children)
-            SelectNode(child, camera, planes, selection);
+            SelectNode(child, camera, cameraForward, projectionScalePixels, planes, selection);
     }
     else
     {
@@ -484,7 +536,11 @@ void TerrainSystem::Draw(
     const XMMATRIX& projection,
     const XMMATRIX& viewProjectionNoJitter,
     const XMMATRIX& previousViewProjectionNoJitter,
-    const XMFLOAT3& cameraPosition)
+    uint32_t viewportHeight,
+    const XMFLOAT3& cameraPosition,
+    const XMMATRIX& cullingView,
+    const XMMATRIX& cullingProjection,
+    const XMFLOAT3& cullingCameraPosition)
 {
     if (!m_rootSignature || m_nodes.empty())
         return;
@@ -501,8 +557,15 @@ void TerrainSystem::Draw(
     m_stats = {};
     std::vector<int32_t> selection;
     selection.reserve(256);
-    const auto planes = ExtractFrustum(viewProjection);
-    SelectNode(0, cameraPosition, planes, selection);
+    const auto planes = ExtractFrustum(cullingView * cullingProjection);
+    const XMMATRIX inverseView = XMMatrixInverse(nullptr, cullingView);
+    XMFLOAT3 cameraForward{};
+    XMStoreFloat3(&cameraForward, XMVector3Normalize(inverseView.r[2]));
+    XMFLOAT4X4 projectionValues{};
+    XMStoreFloat4x4(&projectionValues, cullingProjection);
+    const float projectionScalePixels =
+        0.5f * static_cast<float>((std::max)(1u, viewportHeight)) * projectionValues._22;
+    SelectNode(0, cullingCameraPosition, cameraForward, projectionScalePixels, planes, selection);
 
     commandList->SetGraphicsRootSignature(m_rootSignature.Get());
     commandList->SetPipelineState(m_wireframe ? m_wirePipeline.Get() : m_solidPipeline.Get());
@@ -513,7 +576,7 @@ void TerrainSystem::Draw(
     for (int32_t index : selection)
     {
         const Node& node = m_nodes[static_cast<size_t>(index)];
-        commandList->DrawIndexedInstanced(node.indexCount, 1, node.firstIndex, 0, 0);
+        commandList->DrawIndexedInstanced(node.indexCount, 1, 0, static_cast<INT>(node.baseVertex), 0);
         ++m_stats.submittedNodes;
         m_stats.submittedTriangles += node.indexCount / 3;
     }

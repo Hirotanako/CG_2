@@ -33,8 +33,10 @@ public:
     void Invalidate() { m_historyValid = false; }
     void Toggle() { m_enabled = !m_enabled; Invalidate(); }
     void ToggleMotionDebug() { m_debugMotion = !m_debugMotion; Invalidate(); }
+    void ToggleHistoryClamping() { m_historyClamping = !m_historyClamping; Invalidate(); }
     bool Enabled() const { return m_enabled; }
     bool MotionDebugEnabled() const { return m_debugMotion; }
+    bool HistoryClampingEnabled() const { return m_historyClamping; }
 
 private:
     void CreatePipeline(ID3D12Device* device, const wchar_t* shaderPath);
@@ -56,4 +58,5 @@ private:
     bool m_historyValid = false;
     bool m_enabled = true;
     bool m_debugMotion = false;
+    bool m_historyClamping = true;
 };

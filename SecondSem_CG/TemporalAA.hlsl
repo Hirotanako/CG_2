@@ -11,7 +11,8 @@ cbuffer TemporalConstants : register(b0)
     float HistoryValid;
     float DebugMotion;
     float HistoryWeight;
-    float3 Padding;
+    float HistoryClamping;
+    float2 Padding;
 };
 
 struct FullscreenOutput { float4 position : SV_POSITION; float2 uv : TEXCOORD0; };
@@ -59,7 +60,11 @@ TemporalOutput TemporalPS(FullscreenOutput input)
     if (HistoryValid > 0.5 && onScreen)
     {
         float3 history = HistoryColor.SampleLevel(LinearClamp, historyUv, 0).rgb;
-        history = clamp(history, neighborhoodMin, neighborhoodMax);
+        // H toggles this protection for the required A/B ghosting test.
+        // Keeping reprojection active in both modes isolates the effect of the
+        // 3x3 neighborhood constraint itself.
+        if (HistoryClamping > 0.5)
+            history = clamp(history, neighborhoodMin, neighborhoodMax);
         const float motionRejection = saturate(length(motion) * 12.0);
         result = lerp(current, history, HistoryWeight * (1.0 - motionRejection * 0.65));
     }
