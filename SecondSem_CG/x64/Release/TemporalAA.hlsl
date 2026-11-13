@@ -59,14 +59,43 @@ TemporalOutput TemporalPS(FullscreenOutput input)
     float3 result = current;
     if (HistoryValid > 0.5 && onScreen)
     {
-        float3 history = HistoryColor.SampleLevel(LinearClamp, historyUv, 0).rgb;
+        const float3 rawHistory = HistoryColor.SampleLevel(LinearClamp, historyUv, 0).rgb;
+        float3 history = rawHistory;
+        float colorConfidence = 1.0;
         // H toggles this protection for the required A/B ghosting test.
         // Keeping reprojection active in both modes isolates the effect of the
         // 3x3 neighborhood constraint itself.
         if (HistoryClamping > 0.5)
+        {
             history = clamp(history, neighborhoodMin, neighborhoodMax);
-        const float motionRejection = saturate(length(motion) * 12.0);
-        result = lerp(current, history, HistoryWeight * (1.0 - motionRejection * 0.65));
+
+            // A newly revealed background pixel often reprojects into the old
+            // foreground object. Merely clamping that old colour still leaves
+            // a visible silhouette, so measure how far the sample had to be
+            // clipped and reject history when it does not belong to the current
+            // 3x3 distribution. The small floor keeps flat dark regions stable.
+            const float3 neighborhoodExtent =
+                max(neighborhoodMax - neighborhoodMin, 2.0 / 255.0);
+            const float3 outsideDistance =
+                abs(rawHistory - history) / (neighborhoodExtent + 0.02);
+            const float3 centerDistance =
+                abs(history - current) / (neighborhoodExtent + 0.05);
+            const float disocclusion = saturate(max(
+                max(outsideDistance.r, max(outsideDistance.g, outsideDistance.b)),
+                0.45 * max(centerDistance.r, max(centerDistance.g, centerDistance.b))));
+            colorConfidence = 1.0 - disocclusion;
+        }
+
+        // Motion is stored in UV units. Convert it to pixels before choosing
+        // the temporal weight; the old UV-space multiplier barely reacted even
+        // to several pixels of movement and caused long object afterimages.
+        const float velocityPixels = length(motion / InvResolution);
+        float motionConfidence = exp2(-0.35 * velocityPixels);
+        if (velocityPixels > 24.0)
+            motionConfidence = 0.0;
+
+        const float historyBlend = HistoryWeight * motionConfidence * colorConfidence;
+        result = lerp(current, history, historyBlend);
     }
     output.display = output.history = float4(result, 1.0);
     return output;
