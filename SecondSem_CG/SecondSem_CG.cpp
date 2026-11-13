@@ -65,6 +65,7 @@ constexpr UINT kTaaCurrentSrv = 440;
 constexpr UINT kTaaHistorySrv0 = 441;
 constexpr UINT kTaaHistorySrv1 = 442;
 constexpr UINT kMotionSrv = 443;
+constexpr UINT kDepthSrv = 444;
 // Chromatic aberration was the only post effect. Render lighting straight to
 // the swap-chain target to keep terrain silhouettes and colour bands crisp.
 constexpr bool kPostProcessEnabled = false;
@@ -397,6 +398,8 @@ void ResizeSwapChain(UINT w, UINT h)
             g_device.Get(), w, h, g_srvHeap.Get(), g_srvDescriptorSize);
         g_renderSys.GBufferTargets().CreateMotionVectorSrv(
             g_device.Get(), g_srvHeap.Get(), kMotionSrv, g_srvDescriptorSize);
+        g_renderSys.GBufferTargets().CreateDepthSrv(
+            g_device.Get(), g_srvHeap.Get(), kDepthSrv, g_srvDescriptorSize);
         g_temporalAA.Resize(g_device.Get(), w, h, g_srvHeap.Get());
         g_temporalSample = 0;
         g_currentJitterUv = XMFLOAT2(0.0f, 0.0f);
@@ -1861,7 +1864,7 @@ void DrawFrame(float dt)
         g_cmdList.Get(), g_srvHeap.Get(), g_shadowSys, lightingRtv, g_width, g_height);
     if (runTemporalPass)
         g_temporalAA.Resolve(
-            g_cmdList.Get(), g_srvHeap.Get(), rtv, kMotionSrv,
+            g_cmdList.Get(), g_srvHeap.Get(), rtv, kMotionSrv, kDepthSrv,
             g_currentJitterUv, g_previousJitterUv);
     if (g_observerCamera)
     {
@@ -1998,6 +2001,8 @@ void InitD3D(HWND hwnd)
         DeferredShaderPath().c_str());
     g_renderSys.GBufferTargets().CreateMotionVectorSrv(
         g_device.Get(), g_srvHeap.Get(), kMotionSrv, g_srvDescriptorSize);
+    g_renderSys.GBufferTargets().CreateDepthSrv(
+        g_device.Get(), g_srvHeap.Get(), kDepthSrv, g_srvDescriptorSize);
     g_temporalAA.Init(
         g_device.Get(), g_width, g_height, g_srvHeap.Get(),
         kTaaCurrentSrv, kTaaHistorySrv0, kTaaHistorySrv1,

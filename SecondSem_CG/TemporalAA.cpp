@@ -101,9 +101,9 @@ void TemporalAA::CreateTargets(ID3D12Device* device, UINT width, UINT height, ID
 
 void TemporalAA::CreatePipeline(ID3D12Device* device, const wchar_t* shaderPath)
 {
-    D3D12_DESCRIPTOR_RANGE ranges[3]{};
-    D3D12_ROOT_PARAMETER params[4]{};
-    for (UINT i = 0; i < 3; ++i)
+    D3D12_DESCRIPTOR_RANGE ranges[4]{};
+    D3D12_ROOT_PARAMETER params[5]{};
+    for (UINT i = 0; i < 4; ++i)
     {
         ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
         ranges[i].NumDescriptors = 1;
@@ -114,10 +114,10 @@ void TemporalAA::CreatePipeline(ID3D12Device* device, const wchar_t* shaderPath)
         params[i].DescriptorTable.pDescriptorRanges = &ranges[i];
         params[i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
     }
-    params[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-    params[3].Constants.ShaderRegister = 0;
-    params[3].Constants.Num32BitValues = 12;
-    params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    params[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    params[4].Constants.ShaderRegister = 0;
+    params[4].Constants.Num32BitValues = 12;
+    params[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_STATIC_SAMPLER_DESC sampler{};
     sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -186,7 +186,7 @@ D3D12_CPU_DESCRIPTOR_HANDLE TemporalAA::BeginCurrent(ID3D12GraphicsCommandList* 
 }
 
 void TemporalAA::Resolve(ID3D12GraphicsCommandList* cmd, ID3D12DescriptorHeap* srvHeap,
-    D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv, UINT motionSrvSlot,
+    D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv, UINT motionSrvSlot, UINT depthSrvSlot,
     const DirectX::XMFLOAT2& currentJitterUv, const DirectX::XMFLOAT2& previousJitterUv)
 {
     const UINT writeIndex = 1u - m_historyRead;
@@ -209,12 +209,13 @@ void TemporalAA::Resolve(ID3D12GraphicsCommandList* cmd, ID3D12DescriptorHeap* s
     cmd->SetGraphicsRootDescriptorTable(0, gpu(m_currentSrvSlot));
     cmd->SetGraphicsRootDescriptorTable(1, gpu(m_historySrvSlot[m_historyRead]));
     cmd->SetGraphicsRootDescriptorTable(2, gpu(motionSrvSlot));
+    cmd->SetGraphicsRootDescriptorTable(3, gpu(depthSrvSlot));
     const float constants[12] = {
         1.0f / static_cast<float>(m_width), 1.0f / static_cast<float>(m_height),
         currentJitterUv.x, currentJitterUv.y, previousJitterUv.x, previousJitterUv.y,
         m_historyValid ? 1.0f : 0.0f, m_debugMotion ? 1.0f : 0.0f,
         0.90f, m_historyClamping ? 1.0f : 0.0f, 0.0f, 0.0f};
-    cmd->SetGraphicsRoot32BitConstants(3, 12, constants, 0);
+    cmd->SetGraphicsRoot32BitConstants(4, 12, constants, 0);
     cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     cmd->IASetVertexBuffers(0, 0, nullptr);
     cmd->IASetIndexBuffer(nullptr);

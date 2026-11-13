@@ -27,6 +27,7 @@ public:
         ID3D12DescriptorHeap* srvHeap,
         D3D12_CPU_DESCRIPTOR_HANDLE backbufferRtv,
         UINT motionSrvSlot,
+        UINT depthSrvSlot,
         const DirectX::XMFLOAT2& currentJitterUv,
         const DirectX::XMFLOAT2& previousJitterUv);
 

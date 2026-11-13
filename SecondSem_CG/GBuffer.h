@@ -24,6 +24,12 @@ public:
         UINT heapIndex,
         UINT srvDescriptorSize);
 
+    void CreateDepthSrv(
+        ID3D12Device* device,
+        ID3D12DescriptorHeap* srvHeap,
+        UINT heapIndex,
+        UINT srvDescriptorSize);
+
     void TransitionToRenderTargets(ID3D12GraphicsCommandList* cmd);
     void TransitionToShaderResource(ID3D12GraphicsCommandList* cmd);
 

@@ -73,14 +73,17 @@ void GBuffer::CreateTargets(ID3D12Device* device, UINT width, UINT height)
     ds.Height = height;
     ds.DepthOrArraySize = 1;
     ds.MipLevels = 1;
-    ds.Format = DXGI_FORMAT_D32_FLOAT;
+    // Typeless storage allows the same depth image to be used as D32_FLOAT for
+    // depth testing and R32_FLOAT in the TAA resolve depth-dilation pass.
+    ds.Format = DXGI_FORMAT_R32_TYPELESS;
     ds.SampleDesc.Count = 1;
     ds.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
     D3D12_CLEAR_VALUE dcv{};
     dcv.Format = DXGI_FORMAT_D32_FLOAT;
     dcv.DepthStencil.Depth = 1.0f;
     GFThrow(device->CreateCommittedResource(
-        &hp, D3D12_HEAP_FLAG_NONE, &ds, D3D12_RESOURCE_STATE_DEPTH_WRITE, &dcv, IID_PPV_ARGS(&m_depth)));
+        &hp, D3D12_HEAP_FLAG_NONE, &ds, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        &dcv, IID_PPV_ARGS(&m_depth)));
 
     D3D12_CPU_DESCRIPTOR_HANDLE rBase = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
 
@@ -154,24 +157,26 @@ static D3D12_RESOURCE_BARRIER Transition(
 
 void GBuffer::TransitionToRenderTargets(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER bars[4] = {
+    D3D12_RESOURCE_BARRIER bars[5] = {
         Transition(m_albedo.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         Transition(m_normal.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         Transition(m_position.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
         Transition(m_motion.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+        Transition(m_depth.Get(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_DEPTH_WRITE),
     };
-    cmd->ResourceBarrier(4, bars);
+    cmd->ResourceBarrier(5, bars);
 }
 
 void GBuffer::TransitionToShaderResource(ID3D12GraphicsCommandList* cmd)
 {
-    D3D12_RESOURCE_BARRIER bars[4] = {
+    D3D12_RESOURCE_BARRIER bars[5] = {
         Transition(m_albedo.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         Transition(m_normal.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         Transition(m_position.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
         Transition(m_motion.Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
+        Transition(m_depth.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE),
     };
-    cmd->ResourceBarrier(4, bars);
+    cmd->ResourceBarrier(5, bars);
 }
 
 void GBuffer::ClearAndSetAsRenderTarget(ID3D12GraphicsCommandList* cmd, const float clearRgb[4])
@@ -232,6 +237,22 @@ void GBuffer::CreateMotionVectorSrv(
     srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srv.Texture2D.MipLevels = 1;
     device->CreateShaderResourceView(m_motion.Get(), &srv, handle);
+}
+
+void GBuffer::CreateDepthSrv(
+    ID3D12Device* device,
+    ID3D12DescriptorHeap* srvHeap,
+    UINT heapIndex,
+    UINT srvDescriptorSize)
+{
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+    handle.ptr += static_cast<SIZE_T>(heapIndex) * srvDescriptorSize;
+    D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+    srv.Format = DXGI_FORMAT_R32_FLOAT;
+    srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srv.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_depth.Get(), &srv, handle);
 }
 
 D3D12_CPU_DESCRIPTOR_HANDLE GBuffer::RtvCpuHandle(size_t index) const
